@@ -1,27 +1,27 @@
 {
   "1": [
-    {"max_depth": 0, "max_features": "sqrt", "criterion": "squared_error"}
+    {"max_depth": 0, "max_features": "sqrt", "criterion": "gini"}
   ],
   "2": [
-    {"max_depth": 0, "max_features": "sqrt", "criterion": "squared_error"},
-    {"max_depth": 25, "max_features": "0.8", "criterion": "friedman_mse"}
+    {"max_depth": 0, "max_features": "sqrt", "criterion": "gini"},
+    {"max_depth": 25, "max_features": "0.8", "criterion": "entropy"}
   ],
   "3": [
-    {"max_depth": 0, "max_features": "sqrt", "criterion": "squared_error"},
-    {"max_depth": 25, "max_features": "0.8", "criterion": "friedman_mse"},
-    {"max_depth": 35, "max_features": "0.3", "criterion": "squared_error"}
+    {"max_depth": 0, "max_features": "sqrt", "criterion": "gini"},
+    {"max_depth": 25, "max_features": "0.8", "criterion": "entropy"},
+    {"max_depth": 35, "max_features": "0.3", "criterion": "gini"}
   ],
   "4": [
-    {"max_depth": 0, "max_features": "sqrt", "criterion": "squared_error"},
-    {"max_depth": 25, "max_features": "0.8", "criterion": "friedman_mse"},
-    {"max_depth": 35, "max_features": "0.3", "criterion": "squared_error"},
-    {"max_depth": 0, "max_features": "log2", "criterion": "friedman_mse"}
+    {"max_depth": 0, "max_features": "sqrt", "criterion": "gini"},
+    {"max_depth": 25, "max_features": "0.8", "criterion": "entropy"},
+    {"max_depth": 35, "max_features": "0.3", "criterion": "gini"},
+    {"max_depth": 0, "max_features": "log2", "criterion": "entropy"}
   ],
   "5": [
-    {"max_depth": 0, "max_features": "sqrt", "criterion": "squared_error"},
-    {"max_depth": 25, "max_features": "0.8", "criterion": "friedman_mse"},
-    {"max_depth": 35, "max_features": "0.3", "criterion": "squared_error"},
-    {"max_depth": 0, "max_features": "log2", "criterion": "friedman_mse"},
-    {"max_depth": 18, "max_features": "0.6", "criterion": "squared_error"}
+    {"max_depth": 0, "max_features": "sqrt", "criterion": "gini"},
+    {"max_depth": 25, "max_features": "0.8", "criterion": "entropy"},
+    {"max_depth": 35, "max_features": "0.3", "criterion": "gini"},
+    {"max_depth": 0, "max_features": "log2", "criterion": "entropy"},
+    {"max_depth": 18, "max_features": "0.6", "criterion": "gini"}
   ]
 }
