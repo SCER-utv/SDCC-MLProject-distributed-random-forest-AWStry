@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+service RandomForestWorker {
+
+  rpc TrainSubForest(TrainRequest) returns (TrainResponse);
+  
+  rpc Predict(PredictRequest) returns (PredictResponse);
+  
+  rpc HealthCheck(Empty) returns (HealthStatus);
+}
+
+message TrainRequest {
+  string model_id = 1;
+  string subforest_id = 2;
+  string dataset_s3_path = 3;
+  int32 seed = 4;
+  int32 n_estimators = 5;
+
+  // Tipo di task: 0 = Classificazione, 1 = Regressione
+  int32 task_type = 6;
+  
+  // --- NUOVI CAMPI PER STRATEGIA ETEROGENEA ---
+  int32 max_depth = 7; // 0 significherà None (infinito)
+  string max_features = 8; // "sqrt", "log2", o "0.5" (come stringa)
+  string criterion = 9; // "gini", "entropy", "squared_error"
+}
+
+message TrainResponse {
+  bool success = 1;
+  int32 trees_built = 2;
+  string model_s3_path = 3; // [MODIFICA] per la strategia S3
+  string error_message = 4; // [MODIFICA] per il debug
+  
+}
+
+message PredictRequest {
+  string model_id = 1;
+  string subforest_id = 2;
+  repeated float features = 3;
+  // Serve al worker per sapere cosa calcolare a seconda del tipo di task
+  int32 task_type = 4;
+}
+
+message PredictResponse {
+  repeated int32 votes = 1; // Usato se task_type == 0
+  repeated float estimates = 2; // Usato se task_type == 1
+}
+
+
+message Empty {}
+message HealthStatus { bool alive = 1; }

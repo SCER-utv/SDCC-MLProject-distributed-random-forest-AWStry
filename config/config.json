@@ -1,0 +1,20 @@
+{
+  "model_id": "rf_distributed",
+  "models_directory": "models/checkpoints/",
+  "s3_bucket": "distributed-random-forest-bkt",
+  
+  "paths": {
+    "ids": {
+      "full": "data/ids/processed/ids_optimized.csv",
+      "shards_prefix": "s3://distributed-random-forest-bkt/shards/ids/train_part_"
+    },
+    "taxi": {
+      "full": "data/taxi/processed/taxi_optimized.csv",
+      "shards_prefix": "s3://distributed-random-forest-bkt/shards/taxi/train_part_"
+    },
+    "higgs": {
+      "full": "data/higgs/processed/higgs_optimized.csv",
+      "shards_prefix": "s3://distributed-random-forest-bkt/shards/higgs/train_part_"
+    }
+  }
+}
