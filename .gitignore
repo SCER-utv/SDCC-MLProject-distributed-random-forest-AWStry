@@ -1,0 +1,19 @@
+# Ambienti Virtuali
+venv/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Dati e Modelli (Vanno su AWS S3!)
+data/
+models/
+*.csv
+*.joblib
+
+# File temporanei o di log
+temp/
+*.log
+experiment_results.csv
+.DS_Store
