@@ -66,7 +66,7 @@ class RandomForestManager:
             # [MODIFICA RAM] Aggiungi dtype=np.float32 qui!
             # Questo impedisce a Pandas di caricare double precision (8 byte)
             print(f" -> [Worker] Caricamento ottimizzato: {dataset_path}")
-            df = pd.read_csv(full_path, engine='c', dtype=np.float32)
+            df = pd.read_csv(full_path, engine='c', dtype=np.float32, nrows=100000)
             
             # Identifichiamo la colonna target (Label)
             target_col = 'Label' if 'Label' in df.columns else df.columns[-1]
