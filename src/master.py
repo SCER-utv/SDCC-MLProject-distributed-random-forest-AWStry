@@ -100,9 +100,16 @@ if __name__ == '__main__':
     # Otteniamo il nome del target dinamicamente dal data_manager specifico
     target_col = data_manager.get_target_column()
 
-    # [MODIFICA 6] Caricamento ottimizzato del solo file di Test
-    print(f"Caricamento Test Set da: {test_path}...")
-    test_df = pd.read_csv(test_path, dtype=np.float32)
+    # [MODIFICA AWS] Costruiamo l'URI S3 del Test Set in modo dinamico in base al dataset scelto
+    target_bucket = config.get("s3_bucket", "distributed-random-forest-bkt")
+    
+    # Il nome del file dipende dal dataset (es: "taxi_test_set.csv", "higgs_test_set.csv")
+    s3_test_path = f"s3://{target_bucket}/temp/{args.dataset}_test_set.csv"
+    
+    print(f"Caricamento Test Set da S3: {s3_test_path}...")
+    
+    # Aggiungiamo nrows=50000 per evitare che il Master vada in Out-Of-Memory!
+    test_df = pd.read_csv(s3_test_path, dtype=np.float32, nrows=50000)
     
     if config['task'] != 1: # Se è classificazione, la label è int
         test_df[target_col] = test_df[target_col].astype(np.int8)
