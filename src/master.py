@@ -109,7 +109,7 @@ if __name__ == '__main__':
     print(f"Caricamento Test Set da S3: {s3_test_path}...")
     
     # Aggiungiamo nrows=50000 per evitare che il Master vada in Out-Of-Memory!
-    test_df = pd.read_csv(s3_test_path, dtype=np.float32, nrows=50000)
+    test_df = pd.read_csv(s3_test_path, dtype=np.float32)
     
     if config['task'] != 1: # Se è classificazione, la label è int
         test_df[target_col] = test_df[target_col].astype(np.int8)
