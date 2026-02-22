@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="fsspec")
 def save_baseline_metrics(dataset, trees, max_samples, train_time, inf_time, metrics_dict, target_bucket):
     s3_client = boto3.client('s3')
     
-    # Percorso dinamico come da tua richiesta: es. results/higgs/baseline_higgs_result.csv
+    # Percorso dinamico
     s3_key = f"results/{dataset}/baseline_{dataset}_result.csv"
     
     new_row_df = pd.DataFrame([{
