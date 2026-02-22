@@ -20,12 +20,13 @@ def send_training_request(dataset, workers, trees):
         response = sqs.send_message(
             QueueUrl=QUEUE_URL,
             MessageBody=json.dumps(messagge)
+            MessageGroupId="ML_Training_Jobs"
         )
-        print(f"✅ Richiesta inviata con successo a SQS!")
-        print(f"   Message ID: {response['MessageId']}")
-        print(f"   Dettagli: Dataset={dataset}, Alberi={trees}, Workers={len(workers)}")
+        print(f" Richiesta inviata con successo a SQS!")
+        print(f" Message ID: {response['MessageId']}")
+        print(f" Dettagli: Dataset={dataset}, Alberi={trees}, Workers={len(workers)}")
     except Exception as e:
-        print(f"❌ Errore nell'invio del messaggio: {e}")
+        print(f" Errore nell'invio del messaggio: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Client per inviare Job di Training via SQS")
