@@ -159,8 +159,10 @@ class RandomForestManager:
 
         ### [INIZIO MODIFICA AWS] Lazy Loading del modello da S3 ###
         if model_key not in self.loaded_models:
+            # HARDCODED, DA MODIFICARE!
             filename = f"{model_key}.joblib"
-            s3_key = f"{self.models_dir.strip('/')}/{filename}"
+            dataset_folder = "taxi" if task_type == 1 else "higgs"
+            s3_key = f"models/{dataset_folder}/{filename}"
             local_tmp_path = f"/tmp/{filename}"
             
             s3_client = boto3.client('s3')
