@@ -1,6 +1,7 @@
 import boto3
 import json
 import argparse
+import uuid
 
 # HARDCODED! DA MODIFICARE?
 QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/248593862537/JobRequestQueue.fifo"
@@ -20,7 +21,8 @@ def send_training_request(dataset, workers, trees):
         response = sqs.send_message(
             QueueUrl=QUEUE_URL,
             MessageBody=json.dumps(messagge),
-            MessageGroupId="ML_Training_Jobs"
+            MessageGroupId="ML_Training_Jobs",
+            MessageDeduplicationId=str(uuid.uuid4())
         )
         print(f" Richiesta inviata con successo a SQS!")
         print(f" Message ID: {response['MessageId']}")
