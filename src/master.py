@@ -13,10 +13,8 @@ from src.core.factories.higgs_task_factory import HiggsTaskFactory
 from src.network.grpc_master import GrpcMaster
 from src.core.factories.ids_task_factory import IDSTaskFactory
 from src.core.factories.taxi_task_factory import TaxiTaskFactory
-
-from src.utils.config import load_config
-
 import io
+from src.utils.config import load_config
 
 def save_metrics(dataset, n_workers, n_trees, strategy_name, train_time, inf_time, metrics_dict, config):
     s3_client = boto3.client('s3')
