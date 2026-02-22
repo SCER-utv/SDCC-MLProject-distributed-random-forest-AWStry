@@ -16,9 +16,6 @@ from src.core.factories.taxi_task_factory import TaxiTaskFactory
 
 from src.utils.config import load_config
 
-# [MODIFICA 1] Batch Size aumentato per ridurre overhead di rete (OK)
-BATCH_SIZE = 20000
-
 # [MODIFICA 3] Funzione per salvare i risultati per i grafici dell'esame
 def save_metrics(dataset, n_workers, n_trees, max_depth, train_time, inf_time, metrics_dict):
     file_exists = os.path.isfile('experiment_results.csv')
@@ -40,6 +37,14 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     num_active_workers = len(args.workers)
+
+    # [MODIFICA] BATCH SIZE DINAMICO (HARDCODED, DA MODIFICARE!)
+    if args.dataset == 'taxi':
+        BATCH_SIZE = 50000  # Limite di sicurezza per la regressione
+    elif args.dataset == 'higgs':
+        BATCH_SIZE = 35000  # Limite di sicurezza per la classificazione
+    else:
+        BATCH_SIZE = 20000  # Default di fallback
 
     with open(args.strategy_file, 'r') as f:
         full_strategy_map = json.load(f)
