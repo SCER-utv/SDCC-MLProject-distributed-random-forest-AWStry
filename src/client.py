@@ -19,7 +19,7 @@ def send_training_request(dataset, workers, trees):
         # Invio del messaggio alla coda SQS
         response = sqs.send_message(
             QueueUrl=QUEUE_URL,
-            MessageBody=json.dumps(messagge)
+            MessageBody=json.dumps(messagge),
             MessageGroupId="ML_Training_Jobs"
         )
         print(f" Richiesta inviata con successo a SQS!")
