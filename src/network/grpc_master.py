@@ -203,6 +203,20 @@ class GrpcMaster:
                 except Exception as e:
                     print(f"Errore su {task['subforest_id']}: {e}")
                     return task['subforest_id'], False
+                    
+            completed_tasks = 0
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = [executor.submit(_execute_train_request, t) for t in tasks]
+                for f in as_completed(futures):
+                    sid, success = f.result()
+                    if success:
+                        print(f"Task {sid} completato.")
+                        completed_tasks += 1
+                    else:
+                        print(f"Task {sid} FALLITO DEFINITIVAMENTE. Escludo worker.")
+                        if sid in self.worker_assignments:
+                            del self.worker_assignments[sid]
+                    
 
     def predict_batch(self, batch_rows):
         # 1. Preparazione payload
@@ -213,55 +227,83 @@ class GrpcMaster:
         # [MODIFICA] Inizializziamo un set per i nomi dei worker
         responded_ids = set()
 
-        # 2. Richiesta parallela ai Worker
-        def _ask_worker(sub_id, stub):
-            try:
-                req = rf_service_pb2.PredictRequest(
-                    model_id=self.config['model_id'],
-                    subforest_id=sub_id,
-                    features=flat_feats,
-                    task_type=task_bit
-                )
-                # [MODIFICA FT] Timeout stretto per l'inferenza (5 secondi)
-                # Se un worker non risponde subito, lo consideriamo morto e non blocchiamo l'utente.
-                return sub_id, stub.Predict(req, timeout=5)
+    # 2. Richiesta parallela ai Worker con AUTO-HEALING
+        def _ask_worker(sub_id, initial_stub, initial_addr):
+            MAX_RETRIES = 1
+            current_stub = initial_stub
+            current_addr = initial_addr
 
-            except grpc.RpcError:
-                # [MODIFICA FT] Catturiamo silenziosamente l'errore
-                # print(f"timeout/crash {sub_id}", end=" ") # Decommenta per debug
-                return sub_id, None
-            except Exception:
-                return None
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    req = rf_service_pb2.PredictRequest(
+                        model_id=self.config['model_id'],
+                        subforest_id=sub_id,
+                        features=flat_feats,
+                        task_type=task_bit
+                        # NOTA: Qui il Worker deve essere programmato per sapere
+                        # che se non ha il modello in RAM, deve prima scaricarlo da S3
+                        # usando model_id e subforest_id come chiave!
+                    )
+                    
+                    # Aumentiamo un po' il timeout perché, in caso di crash, 
+                    # il nuovo worker dovrà scaricare il modello da S3 prima di rispondere
+                    return sub_id, current_stub.Predict(req, timeout=30)
 
-        # Usiamo solo i worker che hanno finito il training con successo (worker_assignments aggiornato)
-        active_workers = len(self.worker_assignments)
-        if active_workers == 0:
-            return [None] * len(batch_rows)
+                except grpc.RpcError as e:
+                    print(f"\n [AUTO-HEALING] CRASH INFERENZA: Worker {sub_id} ({current_addr}) non risponde!")
+                    
+                    if attempt < MAX_RETRIES:
+                        print("🛠️ Innesco protocollo di ripristino per l'inferenza...")
+                        new_addr = self._spawn_new_worker(current_addr)
+                        
+                        if new_addr:
+                            ch = grpc.insecure_channel(new_addr)
+                            current_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
+                            current_addr = new_addr
+                            
+                            # Aggiorniamo la rubrica globale
+                            self.worker_assignments[sub_id] = current_stub
+                            
+                            print(f" Ritento l'inferenza del {sub_id} sul nuovo nodo {new_addr}...")
+                            continue # Riavvia il ciclo per fare il secondo tentativo
+                        else:
+                            return sub_id, None
+                    else:
+                        print(f" Worker {sub_id} perso definitivamente anche in inferenza.")
+                        return sub_id, None
+                        
+                except Exception as e:
+                    print(f"Errore sconosciuto su {sub_id}: {e}")
+                    return sub_id, None
 
-        with ThreadPoolExecutor(max_workers=len(self.worker_assignments)) as executor:
-            futures = {executor.submit(_ask_worker, sid, s): sid
-                       for sid, s in self.worker_assignments.items()}
+            # --- REINSERISCI QUESTO BLOCCO ALLA FINE DI PREDICT_BATCH ---
+            active_workers = len(self.worker_assignments)
+            if active_workers == 0:
+                return [None] * len(batch_rows)
 
-            for f in as_completed(futures):
-                sid, resp = f.result()
-                if not resp: continue
+            # Creiamo un dizionario inverso per trovare l'IP dal worker stub
+            stub_to_addr = dict(zip(self.stubs, self.workers))
 
-                # [MODIFICA] Aggiungiamo l'ID del worker alla lista dei rispondenti
-                responded_ids.add(sid)
+            with ThreadPoolExecutor(max_workers=active_workers) as executor:
+                # Passiamo al thread: sub_id, lo stub, e l'indirizzo IP
+                futures = {executor.submit(_ask_worker, sid, s, stub_to_addr[s]): sid
+                           for sid, s in self.worker_assignments.items()}
 
-                # [POLIMORFISMO] Estrarre i valori corretti (votes vs estimates) tramite la strategia
-                worker_vals = self.strategy.extract_predictions(resp)
+                for f in as_completed(futures):
+                    sid, resp = f.result()
+                    if not resp: continue
 
-                if not worker_vals: continue
+                    responded_ids.add(sid)
+                    worker_vals = self.strategy.extract_predictions(resp)
+                    if not worker_vals: continue
 
-                # Spacchettamento dei voti
-                n_trees_in_worker = len(worker_vals) // len(batch_rows)
-                if n_trees_in_worker == 0: continue
+                    n_trees_in_worker = len(worker_vals) // len(batch_rows)
+                    if n_trees_in_worker == 0: continue
 
-                for i in range(len(batch_rows)):
-                    start = i * n_trees_in_worker
-                    end = start + n_trees_in_worker
-                    row_votes[i].extend(worker_vals[start:end])
+                    for i in range(len(batch_rows)):
+                        start = i * n_trees_in_worker
+                        end = start + n_trees_in_worker
+                        row_votes[i].extend(worker_vals[start:end])
 
-        # [POLIMORFISMO] Aggregazione finale delegata alla strategia (Media o Moda)
-        return [self.strategy.aggregate(vals) for vals in row_votes]
+            # Aggregazione finale delegata alla strategia
+            return [self.strategy.aggregate(vals) for vals in row_votes]
