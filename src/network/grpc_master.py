@@ -22,9 +22,9 @@ class GrpcMaster:
         print(f"\n [AUTO-HEALING] Crash del nodo {old_worker_address}! Innesco ripristino...")
         ec2 = boto3.resource('ec2', region_name='us-east-1')
         
-        AMI_ID = 'ami-INSERISCI_QUI_IL_TUO_AMI_ID'  
+        AMI_ID = 'ami-0b6c6ebed2801a5cb'  
         SUBNET_ID = 'subnet-0a61f2346de4cd937'
-        SG_ID = 'sg-INSERISCI_QUI_IL_TUO_SG_ID'     
+        SG_ID = 'sg-004dedd411b0fe130'     
         KEY_NAME = 'distributed-random-forest-key'
 
         startup_script = """#!/bin/bash
