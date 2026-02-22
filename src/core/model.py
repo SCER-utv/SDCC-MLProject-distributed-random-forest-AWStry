@@ -124,8 +124,11 @@ class RandomForestManager:
 
         # 2. Carica sul Bucket S3 estratto dinamicamente
         s3_client = boto3.client('s3')
-        # Costruisce la chiave S3 usando models_directory del JSON (es. "models/checkpoints/...")
-        s3_key = f"{self.models_dir.strip('/')}/{filename}" 
+
+        # [MODIFICA] Salviamo in S3 in una cartella pulita in base al task (1=taxi, altro=higgs)
+        # HARDCODED, da modificare!
+        dataset_folder = "taxi" if task_type == 1 else "higgs"
+        s3_key = f"models/{dataset_folder}/{filename}"
         
         print(f"-> Upload modello su s3://{target_bucket}/{s3_key} in corso...")
         s3_client.upload_file(local_tmp_path, target_bucket, s3_key)
