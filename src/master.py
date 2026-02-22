@@ -16,14 +16,38 @@ from src.core.factories.taxi_task_factory import TaxiTaskFactory
 
 from src.utils.config import load_config
 
-# [MODIFICA 3] Funzione per salvare i risultati per i grafici dell'esame
-def save_metrics(dataset, n_workers, n_trees, max_depth, train_time, inf_time, metrics_dict):
-    file_exists = os.path.isfile('experiment_results.csv')
-    with open('experiment_results.csv', mode='a', newline='') as file:
-        writer = csv.writer(file)
-        if not file_exists:
-            writer.writerow(['Dataset', 'Workers', 'Trees', 'Max_Depth', 'Train_Time', 'Infer_Time', 'Metrics'])
-        writer.writerow([dataset, n_workers, n_trees, max_depth, train_time, inf_time, str(metrics_dict)])
+import io
+
+def save_metrics(dataset, n_workers, n_trees, strategy_name, train_time, inf_time, metrics_dict, config):
+    s3_client = boto3.client('s3')
+    target_bucket = config.get("s3_bucket", "distributed-random-forest-bkt")
+    s3_key = "results/experiment_results.csv"
+    
+    new_row_df = pd.DataFrame([{
+        'Dataset': dataset, 
+        'Workers': n_workers, 
+        'Trees': n_trees, 
+        'Strategy': strategy_name, 
+        'Train_Time': round(train_time, 2), 
+        'Infer_Time': round(inf_time, 2), 
+        'Metrics': str(metrics_dict)
+    }])
+
+    try:
+        # Scarica il CSV esistente dalla RAM di S3
+        obj = s3_client.get_object(Bucket=target_bucket, Key=s3_key)
+        df_existing = pd.read_csv(io.BytesIO(obj['Body'].read()))
+        # Accoda la nuova riga (APPEND continuo)
+        df_final = pd.concat([df_existing, new_row_df], ignore_index=True)
+    except s3_client.exceptions.NoSuchKey:
+        # Se è il primo run assoluto, crea il dataframe da zero
+        df_final = new_row_df
+        
+    # Salva il file aggiornato su S3
+    csv_buffer = io.StringIO()
+    df_final.to_csv(csv_buffer, index=False)
+    s3_client.put_object(Bucket=target_bucket, Key=s3_key, Body=csv_buffer.getvalue())
+    print(f">> Risultati accodati permanentemente in: s3://{target_bucket}/{s3_key}")
 
 if __name__ == '__main__':
 
