@@ -18,6 +18,7 @@ from src.utils.config import load_config
 import botocore 
 import boto3
 import warnings
+from datetime import datetime
 
 def save_metrics(dataset, n_workers, n_trees, strategy_name, train_time, inf_time, metrics_dict, config):
     s3_client = boto3.client('s3')
@@ -56,6 +57,32 @@ def save_metrics(dataset, n_workers, n_trees, strategy_name, train_time, inf_tim
     df_final.to_csv(csv_buffer, index=False)
     s3_client.put_object(Bucket=target_bucket, Key=s3_key, Body=csv_buffer.getvalue())
     print(f">> Risultati accodati permanentemente in: s3://{target_bucket}/{s3_key}")
+
+def update_model_registry(dataset, n_workers, n_trees, metrics_dict, config):
+    
+    #HARDCODED, DA MODIFICARE!
+    dynamodb = boto3.resource('dynamodb', region_name='us-east-1') 
+    table = dynamodb.Table('ModelRegistry')
+    
+    # Generiamo un ID univoco basato sul dataset e l'orario esatto
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    model_id = f"rf_{dataset}_{timestamp}"
+    
+    try:
+        table.put_item(
+            Item={
+                'ModelID': model_id,               # La chiave primaria obbligatoria
+                'Dataset': dataset,
+                'Status': 'READY_FOR_INFERENCE',
+                'WorkersUsed': n_workers,
+                'TotalTrees': n_trees,
+                'Metrics': str(metrics_dict),
+                'Timestamp': timestamp
+            }
+        )
+        print(f">> Stato Condiviso: Modello '{model_id}' registrato con successo su DynamoDB!")
+    except Exception as e:
+        print(f"!! Errore durante l'aggiornamento di DynamoDB: {e}")   
 
 if __name__ == '__main__':
 
@@ -212,5 +239,8 @@ if __name__ == '__main__':
         # (Presuppone che train_duration sia stato calcolato prima)
         save_metrics(args.dataset, config['num_workers'], args.trees, "JSON_Strategy", train_duration, duration, metrics, config)
         print(">> Risultati salvati in experiment_results.csv per l'analisi!")
+
+        # 3. [NUOVO] Registriamo il modello nel Database per lo Stato Condiviso
+        update_model_registry(args.dataset, config['num_workers'], args.trees, metrics, config)
     else:
         print("Errore: Nessuna predizione ricevuta dai Worker.")
