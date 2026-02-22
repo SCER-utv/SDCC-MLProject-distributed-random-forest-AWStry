@@ -200,7 +200,7 @@ if __name__ == '__main__':
         
         # 2. Salviamo tutto nel CSV per i grafici!
         # (Presuppone che train_duration sia stato calcolato prima)
-        save_metrics(args.dataset, config['num_workers'], args.trees, "JSON_Strategy", train_duration, duration, metrics)
+        save_metrics(args.dataset, config['num_workers'], args.trees, "JSON_Strategy", train_duration, duration, metrics, config)
         print(">> Risultati salvati in experiment_results.csv per l'analisi!")
     else:
         print("Errore: Nessuna predizione ricevuta dai Worker.")
