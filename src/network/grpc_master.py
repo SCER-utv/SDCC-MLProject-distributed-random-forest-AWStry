@@ -2,7 +2,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import grpc
 import numpy as np
-
+import boto3   # [NUOVO] Per Auto-Healing
+import time    # [NUOVO] Per le pause
 from src.network.proto import rf_service_pb2_grpc, rf_service_pb2
 
 class GrpcMaster:
@@ -17,12 +18,57 @@ class GrpcMaster:
         # [MODIFICA FT] Lista dei worker "morti" da escludere
         self.dead_workers = set()
 
+    def _spawn_new_worker(self, old_worker_address):
+        print(f"\n [AUTO-HEALING] Crash del nodo {old_worker_address}! Innesco ripristino...")
+        ec2 = boto3.resource('ec2', region_name='us-east-1')
+        
+        AMI_ID = 'ami-INSERISCI_QUI_IL_TUO_AMI_ID'  
+        SUBNET_ID = 'subnet-0a61f2346de4cd937'
+        SG_ID = 'sg-INSERISCI_QUI_IL_TUO_SG_ID'     
+        KEY_NAME = 'distributed-random-forest-key'
+
+        startup_script = """#!/bin/bash
+        cd /home/ubuntu/SDCC-MLProject-distributed-random-forest-AWStry
+        source venv/bin/activate
+        export PYTHONPATH=$(pwd)
+        export AWS_S3_BUCKET=distributed-random-forest-bkt
+        nohup python src/worker.py 50051 > worker_log.txt 2>&1 &
+        """
+
+        try:
+            instances = ec2.create_instances(
+                ImageId=AMI_ID,
+                InstanceType='t3.large', # t3.micro o t2.micro a seconda del Learner Lab
+                SubnetId=SUBNET_ID,
+                SecurityGroupIds=[SG_ID], 
+                KeyName=KEY_NAME,
+                UserData=startup_script,
+                MinCount=1, MaxCount=1
+            )
+            
+            new_instance = instances[0]
+            print(f" [AUTO-HEALING] Creazione EC2 {new_instance.id} in corso. Attesa boot...")
+            new_instance.wait_until_running()
+            new_instance.reload()
+            new_ip = new_instance.private_ip_address
+            new_address = f"{new_ip}:50051"
+            
+            print(f" [AUTO-HEALING] Macchina accesa ({new_ip}). Attendo 30s per l'avvio di gRPC...")
+            # Cruciale per dare tempo allo script bash di attivare il venv e python
+            time.sleep(30) 
+            
+            return new_address
+        except Exception as e:
+            print(f" [AUTO-HEALING] Fallimento critico di Boto3: {e}")
+            return None
+
     def connect(self):
         print("--- Connessione ai Worker ---")
 
         # [MODIFICA FT] Connessione robusta: se uno è spento all'avvio, lo ignoriamo subito
         # ridondante
         active_stubs = []
+        active_workers = [] # [NUOVO]
 
         for addr in self.workers:
             try:
@@ -30,16 +76,16 @@ class GrpcMaster:
                 grpc.channel_ready_future(ch).result(timeout=2)
                 stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
                 self.channels.append(ch)
-                #ridondante
                 active_stubs.append(stub)
+                active_workers.append(addr) # [NUOVO]
                 self.stubs.append(stub)
                 print(f"Connesso a {addr}")
             except Exception as e:
                 print(f"Errore connessione {addr}: {e}")
 
-        # [MODIFICA FT] Verifichiamo la presenza di worker attivi
-        #ridondante
+         # [NUOVO] Mantiene allineati indirizzi e stubs!
         self.stubs = active_stubs
+        self.workers = active_workers
         if not self.stubs:
             raise Exception("CRITICO: Nessun worker disponibile! Impossibile avviare il cluster.")
 
@@ -92,6 +138,7 @@ class GrpcMaster:
             print(f" -> Assegnazione {sub_id} (Worker {i+1}): {worker_specific_path}")
 
             tasks.append({
+                'worker_addr': self.workers[i], # [NUOVO] Passiamo l'IP al thread
                 'stub': self.stubs[i],
                 'subforest_id': sub_id,
                 'seed': i * 1000,
@@ -104,46 +151,58 @@ class GrpcMaster:
             self.worker_assignments[sub_id] = self.stubs[i]
 
         def _execute_train_request(task):
-            try:
-                req = rf_service_pb2.TrainRequest(
-                    model_id=self.config['model_id'],
-                    subforest_id=task['subforest_id'],
-                    dataset_s3_path=task["dataset_path"], #fix per sharding
-                    seed=task['seed'],
-                    n_estimators=task['n_estimators'],
-                    task_type=task_bit,  # Bit fornito dalla strategia
 
-                    # [MODIFICA ETEROGENEA] 4. INIEZIONE NELLA RICHIESTA GRPC
-                    max_depth=int(task['max_depth']),
-                    max_features=str(task['max_features']),
-                    criterion=str(task['criterion'])
-                )
+            MAX_RETRIES = 1 
+            current_stub = task['stub']
+            current_addr = task['worker_addr']
+            
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    req = rf_service_pb2.TrainRequest(
+                        model_id=self.config['model_id'],
+                        subforest_id=task['subforest_id'],
+                        dataset_s3_path=task["dataset_path"], 
+                        seed=task['seed'],
+                        n_estimators=task['n_estimators'],
+                        task_type=task_bit,  
+                        max_depth=int(task['max_depth']),
+                        max_features=str(task['max_features']),
+                        criterion=str(task['criterion'])
+                    )
 
-                print(f"Worker {task['subforest_id']} -> Inizio {task['n_estimators']} alberi...")
-                resp = task['stub'].TrainSubForest(req, timeout=1200)
-                return task['subforest_id'], resp.success
+                    print(f"Worker {task['subforest_id']} [{current_addr}] -> Inizio {task['n_estimators']} alberi...")
+                    resp = current_stub.TrainSubForest(req, timeout=1200)
+                    return task['subforest_id'], resp.success
 
-            except grpc.RpcError as e:
-                # [MODIFICA FT] Gestione Crash durante Training
-                print(f"CRASH RILEVATO: Worker {task['subforest_id']} è caduto durante il training!")
-                return task['subforest_id'], False
-            except Exception as e:
-                print(f"Errore su {task['subforest_id']}: {e}")
-                return task['subforest_id'], False
-
-        completed_tasks = 0
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(_execute_train_request, t) for t in tasks]
-            for f in as_completed(futures):
-                sid, success = f.result()
-                if success:
-                    print(f"Task {sid} completato.")
-                    completed_tasks += 1
-                else:
-                    # [MODIFICA FT] Se fallisce, rimuoviamo il worker dalla lista degli attivi per l'inferenza
-                    print(f"Task {sid} FALLITO. Escludo questo worker dal training e dall'inferenza")
-                    if sid in self.worker_assignments:
-                        del self.worker_assignments[sid]
+                except grpc.RpcError as e:
+                    print(f"\nCRASH RILEVATO: Worker {task['subforest_id']} ({current_addr}) è caduto durante il training!")
+                    
+                    if attempt < MAX_RETRIES:
+                        # Inneschiamo la rigenerazione
+                        new_addr = self._spawn_new_worker(current_addr)
+                        
+                        if new_addr:
+                            # Rigeneriamo lo stub per il nuovo indirizzo IP
+                            ch = grpc.insecure_channel(new_addr)
+                            current_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
+                            current_addr = new_addr
+                            
+                            # Aggiorniamo le rubriche globali per la fase di predict
+                            if task['subforest_id'] in self.worker_assignments:
+                                del self.worker_assignments[task['subforest_id']]
+                            self.worker_assignments[task['subforest_id']] = current_stub
+                            
+                            print(f"🔄 Riprovando il task {task['subforest_id']} sulla nuova macchina {new_addr}...")
+                            continue # Riavvia il ciclo for (secondo tentativo)
+                        else:
+                            return task['subforest_id'], False
+                    else:
+                        print(f"❌ Worker {task['subforest_id']} perso definitivamente. Rinuncio.")
+                        return task['subforest_id'], False
+                        
+                except Exception as e:
+                    print(f"Errore su {task['subforest_id']}: {e}")
+                    return task['subforest_id'], False
 
     def predict_batch(self, batch_rows):
         # 1. Preparazione payload
