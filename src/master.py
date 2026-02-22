@@ -47,17 +47,19 @@ if __name__ == '__main__':
     config = load_config()
 
     try:
+        # Determiniamo la categoria del task in base all'argomento (HARDCODED! DA MODIFICARE)
+        task_category = "regression" if args.dataset == 'taxi' else "classification"
         with open(args.strategy_file, 'r') as f:
             full_strategy_map = json.load(f)
 
         str_num = str(num_active_workers)
-        if str_num in full_strategy_map:
-            # Salviamo nella config SOLO la lista per il numero esatto di worker
-            config['worker_strategies'] = full_strategy_map[str_num]
-            print(f">> Caricato set di {num_active_workers} strategie ottimizzate dal JSON.")
+        if str_num in full_strategy_map[task_category]:
+            # Peschiamo dal ramo corretto (classification o regression)
+            config['worker_strategies'] = full_strategy_map[task_category][str_num]
+            print(f">> Caricato set di {num_active_workers} strategie ({task_category}).")
         else:
-            print(f"!! ERRORE: Nessuna config specifica per {num_active_workers} worker nel file JSON.")
-            sys.exit(1) # Crash pilotato
+            print(f"!! ERRORE: Nessuna config per {num_active_workers} worker in {task_category}.")
+            sys.exit(1)
             
     except Exception as e:
         print(f"!! ERRORE NELLA LETTURA DEL JSON: {e}")
