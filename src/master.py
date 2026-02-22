@@ -84,33 +84,27 @@ def update_model_registry(dataset, n_workers, n_trees, metrics_dict, config):
     except Exception as e:
         print(f"!! Errore durante l'aggiornamento di DynamoDB: {e}")   
 
-if __name__ == '__main__':
 
-    # [MODIFICA 4] Configurazione di Argparse
-    parser = argparse.ArgumentParser(description="Distributed Random Forest Master")
-    parser.add_argument('--dataset', type=str, required=True, choices=['taxi', 'higgs', 'ids', 'covertype'])
-    parser.add_argument('--workers', nargs='+', required=True, help="Lista IP:Porta dei worker")
-    parser.add_argument('--trees', type=int, default=10, help="Numero totale di alberi")
-    # [MODIFICA] Aggiungiamo il percorso del file strategie
-    parser.add_argument('--strategy_file', type=str, default='config/worker_strategies.json')
-    
-    args = parser.parse_args()
-    num_active_workers = len(args.workers)
+
+def process_training_job(dataset, workers_list, trees, strategy_file='config/worker_strategies.json'):
+    print(f"\n{'='*50}\n INIZIO ELABORAZIONE JOB: {dataset.upper()} | {trees} Alberi | {len(workers_list)} Workers\n{'='*50}")
+
+    num_active_workers = len(workers_list)
 
     # [MODIFICA] BATCH SIZE DINAMICO (HARDCODED, DA MODIFICARE!)
-    if args.dataset == 'taxi':
-        BATCH_SIZE = 50000  # Limite di sicurezza per la regressione
-    elif args.dataset == 'higgs':
-        BATCH_SIZE = 35000  # Limite di sicurezza per la classificazione
+    if dataset == 'taxi':
+        BATCH_SIZE = 50000 
+    elif dataset == 'higgs':
+        BATCH_SIZE = 35000 
     else:
-        BATCH_SIZE = 20000  # Default di fallback
+        BATCH_SIZE = 20000 
 
     config = load_config()
 
     try:
-        # [MODIFICA LETTURA JSON BIFORCATA]
-        task_category = "regression" if args.dataset == 'taxi' else "classification"
-        with open(args.strategy_file, 'r') as f:
+        # [MODIFICA LETTURA JSON BIFORCATA, HARDCODED, DA MODIFICARE!)
+        task_category = "regression" if dataset == 'taxi' else "classification"
+        with open(strategy_file, 'r') as f:
             full_strategy_map = json.load(f)
 
         str_num = str(num_active_workers)
@@ -126,13 +120,13 @@ if __name__ == '__main__':
         sys.exit(1)
 
     # [MODIFICA 5] INIEZIONE DEI PARAMETRI DINAMICI NELLA CONFIG IN RAM
-    config['num_workers'] = len(args.workers)
-    config['workers'] = args.workers
-    config['total_trees'] = args.trees
+    config['num_workers'] = num_active_workers
+    config['workers'] = workers_list
+    config['total_trees'] = trees
 
     # Selezione Factory
-    if args.dataset == 'taxi': factory = TaxiTaskFactory()
-    elif args.dataset == 'higgs': factory = HiggsTaskFactory()
+    if dataset == 'taxi': factory = TaxiTaskFactory()
+    elif dataset == 'higgs': factory = HiggsTaskFactory()
     else: factory = IDSTaskFactory()
 
     strategy = factory.create_strategy()
@@ -166,7 +160,7 @@ if __name__ == '__main__':
     target_bucket = config.get("s3_bucket", "distributed-random-forest-bkt")
     
     # Il nome del file dipende dal dataset (es: "taxi_test_set.csv", "higgs_test_set.csv")
-    s3_test_path = f"s3://{target_bucket}/temp/{args.dataset}_test_set.csv"
+    s3_test_path = f"s3://{target_bucket}/temp/{dataset}_test_set.csv"
     
     print(f"Caricamento Test Set da S3: {s3_test_path}...")
     
@@ -237,10 +231,57 @@ if __name__ == '__main__':
         
         # 2. Salviamo tutto nel CSV per i grafici!
         # (Presuppone che train_duration sia stato calcolato prima)
-        save_metrics(args.dataset, config['num_workers'], args.trees, "JSON_Strategy", train_duration, duration, metrics, config)
+        save_metrics(dataset, config['num_workers'], trees, "JSON_Strategy", train_duration, duration, metrics, config)
         print(">> Risultati salvati in experiment_results.csv per l'analisi!")
 
         # 3. [NUOVO] Registriamo il modello nel Database per lo Stato Condiviso
-        update_model_registry(args.dataset, config['num_workers'], args.trees, metrics, config)
+        update_model_registry(dataset, config['num_workers'], trees, metrics, config)
     else:
         print("Errore: Nessuna predizione ricevuta dai Worker.")
+
+
+# DEMONE SQS (In ascolto sulla coda FIFO)
+if __name__ == '__main__':
+    
+    # HARDCODED, DA MODIFICARE!
+    QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/248593862537/JobRequestQueue.fifo"
+    
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    
+    print(" Master avviato e in attesa di Job sulla coda SQS...")
+    
+    while True:
+        try:
+            # Polling lungo: il Master aspetta fino a 20 secondi l'arrivo di un messaggio
+            response = sqs.receive_message(
+                QueueUrl=QUEUE_URL,
+                MaxNumberOfMessages=1,
+                WaitTimeSeconds=20  
+            )
+            
+            if 'Messages' in response:
+                message = response['Messages'][0]
+                receipt_handle = message['ReceiptHandle']
+                
+                # Leggiamo il "bigliettino" inviato dal Client
+                job_data = json.loads(message['Body'])
+                dataset = job_data['dataset']
+                workers = job_data['workers']
+                trees = job_data['trees']
+                
+                # Chiamiamo il motore di training
+                process_training_job(dataset, workers, trees)
+                
+                # Se il training è andato a buon fine, cancelliamo il messaggio dalla coda
+                sqs.delete_message(
+                    QueueUrl=QUEUE_URL,
+                    ReceiptHandle=receipt_handle
+                )
+                print(" Job completato e rimosso dalla coda SQS. Torno in ascolto...\n")
+                
+        except KeyboardInterrupt:
+            print("\n Master arrestato manualmente (Ctrl+C). Uscita dal ciclo SQS.")
+            sys.exit(0)
+        except Exception as e:
+            print(f" Errore imprevisto nel ciclo SQS: {e}")
+            time.sleep(5)
