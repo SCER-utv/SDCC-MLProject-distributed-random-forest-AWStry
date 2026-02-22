@@ -15,11 +15,16 @@ from src.core.factories.ids_task_factory import IDSTaskFactory
 from src.core.factories.taxi_task_factory import TaxiTaskFactory
 import io
 from src.utils.config import load_config
+import botocore 
+import boto3
+import warnings
 
 def save_metrics(dataset, n_workers, n_trees, strategy_name, train_time, inf_time, metrics_dict, config):
     s3_client = boto3.client('s3')
     target_bucket = config.get("s3_bucket", "distributed-random-forest-bkt")
-    s3_key = "results/experiment_results.csv"
+    
+    # [MODIFICA S3] Creazione percorso dinamico: es. "results/higgs/higgs_results.csv"
+    s3_key = f"results/{dataset}/{dataset}_results.csv"
     
     new_row_df = pd.DataFrame([{
         'Dataset': dataset, 
@@ -32,16 +37,21 @@ def save_metrics(dataset, n_workers, n_trees, strategy_name, train_time, inf_tim
     }])
 
     try:
-        # Scarica il CSV esistente dalla RAM di S3
+        # Tenta di scaricare il CSV esistente da S3
         obj = s3_client.get_object(Bucket=target_bucket, Key=s3_key)
         df_existing = pd.read_csv(io.BytesIO(obj['Body'].read()))
-        # Accoda la nuova riga (APPEND continuo)
+        # Se esiste, accoda la nuova riga (APPEND continuo)
         df_final = pd.concat([df_existing, new_row_df], ignore_index=True)
-    except s3_client.exceptions.NoSuchKey:
-        # Se è il primo run assoluto, crea il dataframe da zero
-        df_final = new_row_df
         
-    # Salva il file aggiornato su S3
+    except botocore.exceptions.ClientError as e:
+        # Se il file non esiste (errore 404 NoSuchKey), crea il dataframe partendo dalla nuova riga
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            df_final = new_row_df
+        else:
+            print(f"!! Errore imprevisto di S3 durante il salvataggio: {e}")
+            return
+            
+    # Salva il file aggiornato su S3 (sovrascrivendo la vecchia versione con quella accodata)
     csv_buffer = io.StringIO()
     df_final.to_csv(csv_buffer, index=False)
     s3_client.put_object(Bucket=target_bucket, Key=s3_key, Body=csv_buffer.getvalue())
