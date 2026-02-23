@@ -28,7 +28,7 @@ class GrpcMaster:
             new_name = f"DRF-worker{worker_num}_autohealed"
         except ValueError:
             # Fallback di sicurezza se per qualche motivo non lo trova
-            nuovo_nome = "worker_extra_autohealed"
+            new_name = "worker_extra_autohealed"
             worker_num = "?"
         # ---------------------------------------
         
