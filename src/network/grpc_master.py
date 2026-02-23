@@ -276,34 +276,34 @@ class GrpcMaster:
                     print(f"Errore sconosciuto su {sub_id}: {e}")
                     return sub_id, None
 
-            # --- REINSERISCI QUESTO BLOCCO ALLA FINE DI PREDICT_BATCH ---
-            active_workers = len(self.worker_assignments)
-            if active_workers == 0:
-                return [None] * len(batch_rows)
+        # --- REINSERISCI QUESTO BLOCCO ALLA FINE DI PREDICT_BATCH ---
+        active_workers = len(self.worker_assignments)
+        if active_workers == 0:
+            return [None] * len(batch_rows)
 
-            # Creiamo un dizionario inverso per trovare l'IP dal worker stub
-            stub_to_addr = dict(zip(self.stubs, self.workers))
+        # Creiamo un dizionario inverso per trovare l'IP dal worker stub
+        stub_to_addr = dict(zip(self.stubs, self.workers))
 
-            with ThreadPoolExecutor(max_workers=active_workers) as executor:
-                # Passiamo al thread: sub_id, lo stub, e l'indirizzo IP
-                futures = {executor.submit(_ask_worker, sid, s, stub_to_addr[s]): sid
-                           for sid, s in self.worker_assignments.items()}
+        with ThreadPoolExecutor(max_workers=active_workers) as executor:
+            # Passiamo al thread: sub_id, lo stub, e l'indirizzo IP
+            futures = {executor.submit(_ask_worker, sid, s, stub_to_addr[s]): sid
+                        for sid, s in self.worker_assignments.items()}
 
-                for f in as_completed(futures):
-                    sid, resp = f.result()
-                    if not resp: continue
+            for f in as_completed(futures):
+                sid, resp = f.result()
+                if not resp: continue
 
-                    responded_ids.add(sid)
-                    worker_vals = self.strategy.extract_predictions(resp)
-                    if not worker_vals: continue
+                responded_ids.add(sid)
+                worker_vals = self.strategy.extract_predictions(resp)
+                if not worker_vals: continue
 
-                    n_trees_in_worker = len(worker_vals) // len(batch_rows)
-                    if n_trees_in_worker == 0: continue
+                n_trees_in_worker = len(worker_vals) // len(batch_rows)
+                if n_trees_in_worker == 0: continue
 
-                    for i in range(len(batch_rows)):
-                        start = i * n_trees_in_worker
-                        end = start + n_trees_in_worker
-                        row_votes[i].extend(worker_vals[start:end])
+                for i in range(len(batch_rows)):
+                    start = i * n_trees_in_worker
+                    end = start + n_trees_in_worker
+                    row_votes[i].extend(worker_vals[start:end])
 
-            # Aggregazione finale delegata alla strategia
-            return [self.strategy.aggregate(vals) for vals in row_votes]
+        # Aggregazione finale delegata alla strategia
+        return [self.strategy.aggregate(vals) for vals in row_votes]
