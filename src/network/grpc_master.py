@@ -59,6 +59,9 @@ class GrpcMaster:
                 KeyName=KEY_NAME,
                 UserData=startup_script,
                 MinCount=1, MaxCount=1,
+                IamInstanceProfile={
+                    'Name': 'LabRole' 
+                },
                 TagSpecifications=[
                     {
                         'ResourceType': 'instance',
