@@ -52,7 +52,7 @@ class GrpcMaster:
             print(f"\n [AUTO-HEALING] Crash del nodo {old_worker_address}! Innesco ripristino unico (Lock acquisito)...")
             ec2 = boto3.resource('ec2', region_name='us-east-1')
             
-            AMI_ID = 'ami-08dc249191b795f0e'  
+            AMI_ID = 'ami-01f72e5e0e396c75a'  
             SUBNET_ID = 'subnet-0a61f2346de4cd937'
             SG_ID = 'sg-004dedd411b0fe130'     
             KEY_NAME = 'distributed-random-forest-key'
