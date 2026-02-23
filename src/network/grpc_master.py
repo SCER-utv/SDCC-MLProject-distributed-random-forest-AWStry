@@ -76,7 +76,7 @@ class GrpcMaster:
             new_ip = new_instance.private_ip_address
             new_address = f"{new_ip}:50051"
             
-            print(f" [AUTO-HEALING] Macchina accesa ({new_ip}). Attendo 30s per l'avvio di gRPC...")
+            print(f" [AUTO-HEALING] Macchina accesa ({new_ip}). Attendo 90s per l'avvio di gRPC...")
             # Cruciale per dare tempo allo script bash di attivare il venv e python
             time.sleep(90) 
             
