@@ -124,8 +124,6 @@ class GrpcMaster:
                 print(" ⏳ Attesa di stabilizzazione del demone gRPC (10s)...")
                 time.sleep(15)
                 
-                # 3. SALVATAGGIO DELL'INDIRIZZO PER GLI ALTRI THREAD
-                self.is_recovering[old_worker_address] = new_address
                 return new_address
 
             except Exception as e:
