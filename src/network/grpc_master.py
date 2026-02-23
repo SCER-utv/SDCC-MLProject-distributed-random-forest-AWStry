@@ -28,8 +28,8 @@ class GrpcMaster:
     def _spawn_new_worker(self, old_worker_address):
         # 1. CONTROLLO VELOCE SENZA LOCK (per evitare colli di bottiglia se la macchina è già pronta)
         if old_worker_address in self.is_recovering and self.is_recovering[old_worker_address] is not None:
-            print(f" ⏳ Attesa ripristino già completato per {old_worker_address}...")
-            return self.is_recovering[old_worker_address]
+             print(f" ⏳ Attesa ripristino già completato per {old_worker_address}...")
+             return self.is_recovering[old_worker_address]
 
         # 2. SEZIONE CRITICA CON LOCK
         with self.recovery_lock:
@@ -93,44 +93,44 @@ class GrpcMaster:
                     ]
                 )
 
-            print(f" [AUTO-HEALING] Creazione EC2 {new_instance.id} in corso. Attesa boot...")
-            new_instance.wait_until_running()
-            new_instance.reload()
-            new_ip = new_instance.private_ip_address
-            new_address = f"{new_ip}:50051"
+                print(f" [AUTO-HEALING] Creazione EC2 {new_instance.id} in corso. Attesa boot...")
+                new_instance.wait_until_running()
+                new_instance.reload()
+                new_ip = new_instance.private_ip_address
+                new_address = f"{new_ip}:50051"
 
-            # --- ACTIVE POLLING ---
-            port_is_open = False
-            max_attempts = 30 # Prova per circa 2.5 minuti (30 * 5 sec)
+                # --- ACTIVE POLLING ---
+                port_is_open = False
+                max_attempts = 30 # Prova per circa 2.5 minuti (30 * 5 sec)
                 
-            print(f" [AUTO-HEALING] Macchina accesa ({new_ip}). Attendo l'avvio di gRPC...")
+                print(f" [AUTO-HEALING] Macchina accesa ({new_ip}). Attendo l'avvio di gRPC...")
 
-            for attempt in range(max_attempts):
-                try:
-                    with socket.create_connection((new_ip, 50051), timeout=2):
-                        port_is_open = True
-                        print(f" [AUTO-HEALING] Porta 50051 APERTA al tentativo {attempt + 1}! Il Worker è pronto.")
-                        break
-                except (socket.timeout, ConnectionRefusedError, OSError):
-                    print(f" Tentativo {attempt + 1}/{max_attempts}: Porta ancora chiusa. Attendo...")
-                    time.sleep(5)
+                for attempt in range(max_attempts):
+                    try:
+                        with socket.create_connection((new_ip, 50051), timeout=2):
+                            port_is_open = True
+                            print(f" [AUTO-HEALING] Porta 50051 APERTA al tentativo {attempt + 1}! Il Worker è pronto.")
+                            break
+                    except (socket.timeout, ConnectionRefusedError, OSError):
+                        print(f" Tentativo {attempt + 1}/{max_attempts}: Porta ancora chiusa. Attendo...")
+                        time.sleep(5)
                 
-            if not port_is_open:
-                print(f" [AUTO-HEALING] Timeout critico: Il worker {new_ip} non ha aperto la porta in tempo utile.")
+                if not port_is_open:
+                    print(f" [AUTO-HEALING] Timeout critico: Il worker {new_ip} non ha aperto la porta in tempo utile.")
+                    return None
+                
+                time.sleep(2) 
+                
+                # 3. SALVATAGGIO DELL'INDIRIZZO PER GLI ALTRI THREAD
+                self.is_recovering[old_worker_address] = new_address
+                return new_address
+
+            except Exception as e:
+                print(f" [AUTO-HEALING] Fallimento critico di Boto3: {e}")
+                # Rimuoviamo il marcatore in caso di fallimento in modo che altri possano riprovare
+                if old_worker_address in self.is_recovering:
+                     del self.is_recovering[old_worker_address]
                 return None
-                
-            time.sleep(2) 
-                
-            # 3. SALVATAGGIO DELL'INDIRIZZO PER GLI ALTRI THREAD
-            self.is_recovering[old_worker_address] = new_address
-            return new_address
-
-        except Exception as e:
-            print(f" [AUTO-HEALING] Fallimento critico di Boto3: {e}")
-            # Rimuoviamo il marcatore in caso di fallimento in modo che altri possano riprovare
-            if old_worker_address in self.is_recovering:
-                del self.is_recovering[old_worker_address]
-            return None
 
     def connect(self):
         print("--- Connessione ai Worker ---")
