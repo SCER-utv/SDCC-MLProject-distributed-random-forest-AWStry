@@ -5,6 +5,7 @@ import numpy as np
 import boto3   # [NUOVO] Per Auto-Healing
 import time    # [NUOVO] Per le pause
 from src.network.proto import rf_service_pb2_grpc, rf_service_pb2
+import socket
 
 class GrpcMaster:
     def __init__(self, config, strategy):
@@ -40,11 +41,13 @@ class GrpcMaster:
         KEY_NAME = 'distributed-random-forest-key'
 
         startup_script = """#!/bin/bash
+        sudo -u ubuntu bash -c '
         cd /home/ubuntu/SDCC-MLProject-distributed-random-forest-AWStry
         source venv/bin/activate
         export PYTHONPATH=$(pwd)
         export AWS_S3_BUCKET=distributed-random-forest-bkt
-        nohup python src/worker.py 50051 > worker_log.txt 2>&1 &
+        nohup python src/worker.py 50051 > /home/ubuntu/worker_log.txt 2>&1 &
+        '
         """
 
         try:
@@ -75,10 +78,31 @@ class GrpcMaster:
             new_instance.reload()
             new_ip = new_instance.private_ip_address
             new_address = f"{new_ip}:50051"
+
+            # --- [NUOVO] ACTIVE POLLING ---
+            port_is_open = False
+            max_attempts = 30 # Prova per circa 2.5 minuti (30 * 5 sec)
             
             print(f" [AUTO-HEALING] Macchina accesa ({new_ip}). Attendo 90s per l'avvio di gRPC...")
-            # Cruciale per dare tempo allo script bash di attivare il venv e python
-            time.sleep(90) 
+
+            for attempt in range(max_attempts):
+                try:
+                    # Tenta di aprire una connessione TCP velocissima
+                    with socket.create_connection((new_ip, 50051), timeout=2):
+                        port_is_open = True
+                        print(f" ✅ [AUTO-HEALING] Porta 50051 APERTA al tentativo {attempt + 1}! Il Worker è pronto.")
+                        break
+                except (socket.timeout, ConnectionRefusedError, OSError):
+                    print(f" ⏳ Tentativo {attempt + 1}/{max_attempts}: Porta ancora chiusa. Attendo...")
+                    time.sleep(5)
+            
+            if not port_is_open:
+                print(f" ❌ [AUTO-HEALING] Timeout critico: Il worker {new_ip} non ha aperto la porta in tempo utile.")
+                return None
+            
+            # Diamogli 2 secondi extra per permettere a gRPC di stabilizzarsi dopo l'apertura del socket
+            time.sleep(2) 
+            # ------------------------------
             
             return new_address
         except Exception as e:
