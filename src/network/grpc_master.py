@@ -60,7 +60,7 @@ class GrpcMaster:
                 UserData=startup_script,
                 MinCount=1, MaxCount=1,
                 IamInstanceProfile={
-                    'Name': 'LabRole' 
+                    'Name': 'LabInstanceProfile' 
                 },
                 TagSpecifications=[
                     {
