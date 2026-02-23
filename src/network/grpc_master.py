@@ -332,8 +332,8 @@ class GrpcMaster:
                             current_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
                             current_addr = new_addr
                             
-                            # Aggiorniamo la rubrica globale
-                            self.worker_assignments[sub_id] = current_stub
+                            # Aggiorniamo la rubrica globale (Salvando la TUPLA!)
+                            self.worker_assignments[sub_id] = (current_stub, current_addr)
                             
                             print(f" Ritento l'inferenza del {sub_id} sul nuovo nodo {new_addr}...")
                             continue # Riavvia il ciclo per fare il secondo tentativo
