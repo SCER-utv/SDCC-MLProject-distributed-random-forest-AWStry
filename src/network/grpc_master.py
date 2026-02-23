@@ -218,7 +218,7 @@ class GrpcMaster:
                 'max_features': str(conf['max_features']), 
                 'criterion': conf['criterion']
             })
-            self.worker_assignments[sub_id] = self.stubs[i]
+            self.worker_assignments[sub_id] = (self.stubs[i], self.workers[i])
 
         def _execute_train_request(task):
 
@@ -260,7 +260,7 @@ class GrpcMaster:
                             current_addr = new_addr_string
                             
                             # Aggiorniamo la rubrica globale (Thread-safe)
-                            self.worker_assignments[sub_id] = new_stub
+                            self.worker_assignments[task['subforest_id']] = (current_stub, current_addr)
                             # ------------------------------------------------------------------
                             
                             print(f" 🔄 Ritento l'inferenza del {sub_id} sul nuovo nodo {new_addr_string}...")
@@ -352,13 +352,12 @@ class GrpcMaster:
         if active_workers == 0:
             return [None] * len(batch_rows)
 
-        # Creiamo un dizionario inverso per trovare l'IP dal worker stub
-        stub_to_addr = dict(zip(self.stubs, self.workers))
-
         with ThreadPoolExecutor(max_workers=active_workers) as executor:
-            # Passiamo al thread: sub_id, lo stub, e l'indirizzo IP
-            futures = {executor.submit(_ask_worker, sid, s, stub_to_addr[s]): sid
-                        for sid, s in self.worker_assignments.items()}
+            # Estraiamo direttamente la tupla (stub, addr) dal dizionario
+            futures = {
+                executor.submit(_ask_worker, sid, stub, addr): sid
+                for sid, (stub, addr) in self.worker_assignments.items()
+            }
 
             for f in as_completed(futures):
                 sid, resp = f.result()
