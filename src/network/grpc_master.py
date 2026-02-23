@@ -122,7 +122,7 @@ class GrpcMaster:
                 # Aspettiamo 10 secondi secchi per permettere agli import Python
                 # e al demone gRPC di stabilizzarsi prima di inviare i chunk.
                 print(" ⏳ Attesa di stabilizzazione del demone gRPC (10s)...")
-                time.sleep(10)
+                time.sleep(15)
                 
                 # 3. SALVATAGGIO DELL'INDIRIZZO PER GLI ALTRI THREAD
                 self.is_recovering[old_worker_address] = new_address
@@ -303,7 +303,7 @@ class GrpcMaster:
 
     # 2. Richiesta parallela ai Worker con AUTO-HEALING
         def _ask_worker(sub_id, initial_stub, initial_addr):
-            MAX_RETRIES = 1
+            MAX_RETRIES = 2
             current_stub = initial_stub
             current_addr = initial_addr
 
@@ -321,7 +321,8 @@ class GrpcMaster:
                     
                     # Aumentiamo un po' il timeout perché, in caso di crash, 
                     # il nuovo worker dovrà scaricare il modello da S3 prima di rispondere
-                    return sub_id, current_stub.Predict(req, timeout=30)
+                    # Diamo fino a 3 MINUTI per compensare il download da S3 e l'ondata di chunk
+                    return sub_id, current_stub.Predict(req, timeout=180)
 
                 except grpc.RpcError as e:
                     print(f"\n [AUTO-HEALING] CRASH INFERENZA: Worker {sub_id} ({current_addr}) non risponde!")
@@ -332,6 +333,15 @@ class GrpcMaster:
                         
                         if new_addr:
                             ch = grpc.insecure_channel(new_addr)
+
+                            # --- AGGIUNGI QUESTO BLOCCO ---
+                            try:
+                                # Costringe il Master ad aspettare che l'handshake gRPC sia completo
+                                grpc.channel_ready_future(ch).result(timeout=60)
+                            except grpc.FutureTimeoutError:
+                                print(f" Il canale gRPC verso {new_addr} non è ancora pronto!")
+                            # ------------------------------
+                            
                             current_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
                             current_addr = new_addr
                             
