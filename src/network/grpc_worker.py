@@ -59,43 +59,56 @@ class GrpcWorker(rf_service_pb2_grpc.RandomForestWorkerServicer):
 
     def Predict(self, request, context):
         try:
-
-            #  [NUOVO] AUTO-HEALING: CONTROLLO E DOWNLOAD DA S3 
-            filename = f"{request.model_id}_{request.subforest_id}.joblib"
-            local_model_path = os.path.join(self.models_dir, filename)
-            s3_model_key = f"models_backup/{filename}"
-
-            # Se la macchina è appena "rinata", la cartella sarà vuota. Lo scarichiamo!
-            if not os.path.exists(local_model_path):
-                print(f"🚨 Modello {filename} non trovato in RAM/Disco!")
-                print("🛠️ Innesco Auto-Healing: Download modello da S3...")
-                
-                # Creiamo la cartella models/checkpoints se la nuova EC2 non l'ha ancora creata
-                os.makedirs(self.models_dir, exist_ok=True)
-                
-                # Scarichiamo il file
-                self.s3_client.download_file(self.bucket_name, s3_model_key, local_model_path)
-                print("✅ Modello ripristinato con successo da S3! Procedo all'inferenza.")
-                
-            # ---------------------------------------------------------
             # 1. Otteniamo i componenti polimorfici dalla Factory
             factory = self._get_factory(request.task_type)
             strategy = factory.create_strategy()
 
-            # 2. Esecuzione dell'inferenza tramite il manager
-            results = self.manager.predict_batch(
-                model_id=request.model_id,
-                subforest_id=request.subforest_id,
-                flat_features=request.features,
-                task_type=request.task_type
-            )
+            # --- RETRY LOGIC (Gestione S3 e ritardi di rete) ---
+            max_retries = 3
+            results = []
+            success = False
+
+            for attempt in range(max_retries):
+                try:
+                    # 2. Esecuzione dell'inferenza tramite il manager
+                    # NOTA: Il manager gestisce in automatico il Lazy Loading da S3 se il file non è in RAM!
+                    results = self.manager.predict_batch(
+                        model_id=request.model_id,
+                        subforest_id=request.subforest_id,
+                        flat_features=request.features,
+                        task_type=request.task_type
+                    )
+                    
+                    # Se non ci sono eccezioni e ha restituito dei risultati, abbiamo vinto
+                    if results is not None and len(results) > 0:
+                        success = True
+                        break
+                    else:
+                        print(f" Nessun risultato estratto. Ritento {attempt+1}/{max_retries}...")
+                        time.sleep(2)
+
+                except Exception as e:
+                    error_msg = str(e)
+                    if "404" in error_msg or "Not Found" in error_msg:
+                        print(f" [S3 Eventual Consistency] Modello non ancora propagato. Ritento {attempt+1}/{max_retries}...")
+                    else:
+                        print(f" Errore imprevisto nell'inferenza: {e}. Ritento {attempt+1}/{max_retries}...")
+                    
+                    time.sleep(3) # Diamo tempo a S3 di allinearsi
+
+            if not success:
+                print(f" Fallimento critico: Impossibile completare l'inferenza per {request.subforest_id} dopo {max_retries} tentativi.")
+                # Segnaliamo al Master che questo Worker ha fallito, così lui può fare l'Auto-Healing!
+                context.abort(grpc.StatusCode.NOT_FOUND, "Modello non trovato su S3 o errore interno")
+                return rf_service_pb2.PredictResponse()
+            # ---------------------------------------------------
 
             # 3. POLIMORFISMO: La strategia crea la risposta gRPC corretta
-            # Sostituisce: if request.task_type == 1: ... else: ...
             return strategy.create_predict_response(results)
 
         except Exception as e:
-            print(f"Errore durante l'Inferenza [{request.subforest_id}]: {e}")
+            print(f"Errore fatale durante l'Inferenza [{request.subforest_id}]: {e}")
+            context.abort(grpc.StatusCode.INTERNAL, str(e))
             return rf_service_pb2.PredictResponse()
 
 
