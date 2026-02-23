@@ -248,24 +248,25 @@ class GrpcMaster:
                     print(f"\nCRASH RILEVATO: Worker {task['subforest_id']} ({current_addr}) è caduto durante il training!")
                     
                     if attempt < MAX_RETRIES:
-                        # Inneschiamo la rigenerazione
-                        new_addr = self._spawn_new_worker(current_addr)
+                        print("🛠️ Innesco protocollo di ripristino per l'inferenza...")
+                        new_addr_string = self._spawn_new_worker(current_addr)
                         
-                        if new_addr:
-                            # Rigeneriamo lo stub per il nuovo indirizzo IP
-                            ch = grpc.insecure_channel(new_addr)
-                            current_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
-                            current_addr = new_addr
+                        if new_addr_string:
+                            # --- IL FIX È QUI: Ricreiamo il canale e lo Stub per il nuovo IP ---
+                            ch = grpc.insecure_channel(new_addr_string)
+                            new_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
                             
-                            # Aggiorniamo le rubriche globali per la fase di predict
-                            if task['subforest_id'] in self.worker_assignments:
-                                del self.worker_assignments[task['subforest_id']]
-                            self.worker_assignments[task['subforest_id']] = current_stub
+                            current_stub = new_stub
+                            current_addr = new_addr_string
                             
-                            print(f" Riprovando il task {task['subforest_id']} sulla nuova macchina {new_addr}...")
-                            continue # Riavvia il ciclo for (secondo tentativo)
+                            # Aggiorniamo la rubrica globale (Thread-safe)
+                            self.worker_assignments[sub_id] = new_stub
+                            # ------------------------------------------------------------------
+                            
+                            print(f" 🔄 Ritento l'inferenza del {sub_id} sul nuovo nodo {new_addr_string}...")
+                            continue # Riavvia il ciclo per fare il secondo tentativo
                         else:
-                            return task['subforest_id'], False
+                            return sub_id, None
                     else:
                         print(f" Worker {task['subforest_id']} perso definitivamente. Rinuncio.")
                         return task['subforest_id'], False
