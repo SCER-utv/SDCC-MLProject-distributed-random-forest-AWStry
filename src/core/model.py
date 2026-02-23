@@ -118,23 +118,23 @@ class RandomForestManager:
 
         ### [INIZIO MODIFICA AWS] Salvataggio Modello su S3 via Boto3 ###
         filename = f"{model_id}_{subforest_id}.joblib"
-        # 1. Salva in cartella temporanea locale su EC2
-        local_tmp_path = f"/tmp/{filename}"
-        joblib.dump(clf, local_tmp_path)
+        
+        # --- FIX PERMESSI: Usiamo self.models_dir invece di /tmp ---
+        os.makedirs(self.models_dir, exist_ok=True)
+        local_path = os.path.join(self.models_dir, filename)
+        
+        joblib.dump(clf, local_path)
 
         # 2. Carica sul Bucket S3 estratto dinamicamente
         s3_client = boto3.client('s3')
-
-        # [MODIFICA] Salviamo in S3 in una cartella pulita in base al task (1=taxi, altro=higgs)
-        # HARDCODED, da modificare!
         dataset_folder = "taxi" if task_type == 1 else "higgs"
         s3_key = f"models/{dataset_folder}/{filename}"
         
         print(f"-> Upload modello su s3://{target_bucket}/{s3_key} in corso...")
-        s3_client.upload_file(local_tmp_path, target_bucket, s3_key)
+        s3_client.upload_file(local_path, target_bucket, s3_key)
         
-        # 3. Elimina il file locale
-        os.remove(local_tmp_path)
+        # 3. Elimina il file locale per liberare spazio
+        os.remove(local_path)
         ### [FINE MODIFICA AWS] ###
 
         self.loaded_models[f"{model_id}_{subforest_id}"] = clf
