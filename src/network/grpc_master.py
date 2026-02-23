@@ -25,7 +25,7 @@ class GrpcMaster:
         try:
             # Trova l'indice dell'IP crashato nella lista e aggiunge 1 (0 -> 1, 1 -> 2...)
             worker_num = self.workers.index(old_worker_address) + 1
-            new_name = f"worker{worker_num}_autohealed"
+            new_name = f"DRF-worker{worker_num}_autohealed"
         except ValueError:
             # Fallback di sicurezza se per qualche motivo non lo trova
             nuovo_nome = "worker_extra_autohealed"
@@ -90,14 +90,14 @@ class GrpcMaster:
                     # Tenta di aprire una connessione TCP velocissima
                     with socket.create_connection((new_ip, 50051), timeout=2):
                         port_is_open = True
-                        print(f" ✅ [AUTO-HEALING] Porta 50051 APERTA al tentativo {attempt + 1}! Il Worker è pronto.")
+                        print(f" [AUTO-HEALING] Porta 50051 APERTA al tentativo {attempt + 1}! Il Worker è pronto.")
                         break
                 except (socket.timeout, ConnectionRefusedError, OSError):
-                    print(f" ⏳ Tentativo {attempt + 1}/{max_attempts}: Porta ancora chiusa. Attendo...")
+                    print(f" Tentativo {attempt + 1}/{max_attempts}: Porta ancora chiusa. Attendo...")
                     time.sleep(5)
             
             if not port_is_open:
-                print(f" ❌ [AUTO-HEALING] Timeout critico: Il worker {new_ip} non ha aperto la porta in tempo utile.")
+                print(f" [AUTO-HEALING] Timeout critico: Il worker {new_ip} non ha aperto la porta in tempo utile.")
                 return None
             
             # Diamogli 2 secondi extra per permettere a gRPC di stabilizzarsi dopo l'apertura del socket
