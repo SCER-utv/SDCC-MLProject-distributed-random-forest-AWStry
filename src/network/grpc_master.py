@@ -6,6 +6,7 @@ import boto3   # [NUOVO] Per Auto-Healing
 import time    # [NUOVO] Per le pause
 from src.network.proto import rf_service_pb2_grpc, rf_service_pb2
 import socket
+import threading # Aggiungi questo import in alto
 
 class GrpcMaster:
     def __init__(self, config, strategy):
@@ -18,6 +19,11 @@ class GrpcMaster:
         self.worker_assignments = {}
         # [MODIFICA FT] Lista dei worker "morti" da escludere
         self.dead_workers = set()
+        
+        # --- AGGIUNGI QUESTE DUE RIGHE QUI ---
+        self.recovery_lock = threading.Lock()
+        self.is_recovering = {}
+        # -------------------------------------
 
     def _spawn_new_worker(self, old_worker_address):
 
