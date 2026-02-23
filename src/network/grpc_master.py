@@ -55,7 +55,7 @@ class GrpcMaster:
             
             print(f" [AUTO-HEALING] Macchina accesa ({new_ip}). Attendo 30s per l'avvio di gRPC...")
             # Cruciale per dare tempo allo script bash di attivare il venv e python
-            time.sleep(30) 
+            time.sleep(90) 
             
             return new_address
         except Exception as e:
@@ -192,12 +192,12 @@ class GrpcMaster:
                                 del self.worker_assignments[task['subforest_id']]
                             self.worker_assignments[task['subforest_id']] = current_stub
                             
-                            print(f"🔄 Riprovando il task {task['subforest_id']} sulla nuova macchina {new_addr}...")
+                            print(f" Riprovando il task {task['subforest_id']} sulla nuova macchina {new_addr}...")
                             continue # Riavvia il ciclo for (secondo tentativo)
                         else:
                             return task['subforest_id'], False
                     else:
-                        print(f"❌ Worker {task['subforest_id']} perso definitivamente. Rinuncio.")
+                        print(f" Worker {task['subforest_id']} perso definitivamente. Rinuncio.")
                         return task['subforest_id'], False
                         
                 except Exception as e:
