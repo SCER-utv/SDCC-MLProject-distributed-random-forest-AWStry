@@ -19,6 +19,18 @@ class GrpcMaster:
         self.dead_workers = set()
 
     def _spawn_new_worker(self, old_worker_address):
+
+        # --- [NUOVO] CALCOLO DEL NOME LOGICO ---
+        try:
+            # Trova l'indice dell'IP crashato nella lista e aggiunge 1 (0 -> 1, 1 -> 2...)
+            worker_num = self.workers.index(old_worker_address) + 1
+            new_name = f"worker{worker_num}_autohealed"
+        except ValueError:
+            # Fallback di sicurezza se per qualche motivo non lo trova
+            nuovo_nome = "worker_extra_autohealed"
+            worker_num = "?"
+        # ---------------------------------------
+        
         print(f"\n [AUTO-HEALING] Crash del nodo {old_worker_address}! Innesco ripristino...")
         ec2 = boto3.resource('ec2', region_name='us-east-1')
         
@@ -43,7 +55,18 @@ class GrpcMaster:
                 SecurityGroupIds=[SG_ID], 
                 KeyName=KEY_NAME,
                 UserData=startup_script,
-                MinCount=1, MaxCount=1
+                MinCount=1, MaxCount=1,
+                TagSpecifications=[
+                    {
+                        'ResourceType': 'instance',
+                        'Tags': [
+                            {
+                                'Key': 'Name',
+                                'Value': new_name
+                            }
+                        ]
+                    }
+                ]
             )
             
             new_instance = instances[0]
