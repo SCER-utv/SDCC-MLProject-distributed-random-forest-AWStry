@@ -204,18 +204,18 @@ class GrpcMaster:
                     print(f"Errore su {task['subforest_id']}: {e}")
                     return task['subforest_id'], False
                     
-            completed_tasks = 0
-            with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                futures = [executor.submit(_execute_train_request, t) for t in tasks]
-                for f in as_completed(futures):
-                    sid, success = f.result()
-                    if success:
-                        print(f"Task {sid} completato.")
-                        completed_tasks += 1
-                    else:
-                        print(f"Task {sid} FALLITO DEFINITIVAMENTE. Escludo worker.")
-                        if sid in self.worker_assignments:
-                            del self.worker_assignments[sid]
+        completed_tasks = 0
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = [executor.submit(_execute_train_request, t) for t in tasks]
+            for f in as_completed(futures):
+                sid, success = f.result()
+                if success:
+                    print(f"Task {sid} completato.")
+                    completed_tasks += 1
+                else:
+                    print(f"Task {sid} FALLITO DEFINITIVAMENTE. Escludo worker.")
+                    if sid in self.worker_assignments:
+                        del self.worker_assignments[sid]
                     
 
     def predict_batch(self, batch_rows):
