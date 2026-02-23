@@ -25,7 +25,7 @@ class GrpcMaster:
         try:
             # Trova l'indice dell'IP crashato nella lista e aggiunge 1 (0 -> 1, 1 -> 2...)
             worker_num = self.workers.index(old_worker_address) + 1
-            new_name = f"DRF-worker{worker_num}_autohealed"
+            new_name = f"DRF-worker{worker_num}-autohealed"
         except ValueError:
             # Fallback di sicurezza se per qualche motivo non lo trova
             new_name = "worker_extra_autohealed"
