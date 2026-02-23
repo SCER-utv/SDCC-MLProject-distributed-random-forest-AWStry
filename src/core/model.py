@@ -159,25 +159,29 @@ class RandomForestManager:
 
         ### [INIZIO MODIFICA AWS] Lazy Loading del modello da S3 ###
         if model_key not in self.loaded_models:
-            # HARDCODED, DA MODIFICARE!
             filename = f"{model_key}.joblib"
             dataset_folder = "taxi" if task_type == 1 else "higgs"
             s3_key = f"models/{dataset_folder}/{filename}"
-            local_tmp_path = f"/tmp/{filename}"
+            
+            # --- FIX PERMESSI: Usiamo self.models_dir invece di /tmp ---
+            os.makedirs(self.models_dir, exist_ok=True)
+            local_path = os.path.join(self.models_dir, filename)
             
             s3_client = boto3.client('s3')
             print(f" -> [Worker] Download modello da s3://{target_bucket}/{s3_key} ...")
             try:
-                # Scarica da S3 a locale temporaneo
-                s3_client.download_file(target_bucket, s3_key, local_tmp_path)
-                self.loaded_models[model_key] = joblib.load(local_tmp_path)
-                # Pulisce il file temporaneo
-                os.remove(local_tmp_path)
+                # Scarica direttamente nella cartella del progetto
+                s3_client.download_file(target_bucket, s3_key, local_path)
+                
+                # Caricalo in RAM
+                self.loaded_models[model_key] = joblib.load(local_path)
+                
+                # Pulisce il file dal disco
+                os.remove(local_path)
             except Exception as e:
                 print(f"!!! Errore: Download Modello {filename} da S3 fallito: {e}")
                 return []
         ### [FINE MODIFICA AWS] ###
-
 
         model = self.loaded_models[model_key]
         n_features = int(model.n_features_in_)
