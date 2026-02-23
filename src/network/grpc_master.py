@@ -290,7 +290,7 @@ class GrpcMaster:
                         del self.worker_assignments[sid]
                     
 
-    def predict_batch(self, batch_rows):
+def predict_batch(self, batch_rows):
         # 1. Preparazione payload
         flat_feats = [x for r in batch_rows for x in r]
         row_votes = [[] for _ in range(len(batch_rows))]
@@ -299,64 +299,73 @@ class GrpcMaster:
         # [MODIFICA] Inizializziamo un set per i nomi dei worker
         responded_ids = set()
 
-    # 2. Richiesta parallela ai Worker con AUTO-HEALING
+        # 2. Richiesta parallela ai Worker con AUTO-HEALING ASINCRONO
         def _ask_worker(sub_id, initial_stub, initial_addr):
-            MAX_RETRIES = 2
-            current_stub = initial_stub
-            current_addr = initial_addr
-
-            for attempt in range(MAX_RETRIES + 1):
-                try:
-                    req = rf_service_pb2.PredictRequest(
-                        model_id=self.config['model_id'],
-                        subforest_id=sub_id,
-                        features=flat_feats,
-                        task_type=task_bit
-                        # NOTA: Qui il Worker deve essere programmato per sapere
-                        # che se non ha il modello in RAM, deve prima scaricarlo da S3
-                        # usando model_id e subforest_id come chiave!
-                    )
-                    
-                    # Aumentiamo un po' il timeout perché, in caso di crash, 
-                    # il nuovo worker dovrà scaricare il modello da S3 prima di rispondere
-                    # Diamo fino a 3 MINUTI per compensare il download da S3 e l'ondata di chunk
-                    return sub_id, current_stub.Predict(req, timeout=180)
-
-                except grpc.RpcError as e:
-                    print(f"\n [AUTO-HEALING] CRASH INFERENZA: Worker {sub_id} ({current_addr}) non risponde!")
-                    
-                    if attempt < MAX_RETRIES:
-                        print("🛠️ Innesco protocollo di ripristino per l'inferenza...")
-                        new_addr = self._spawn_new_worker(current_addr)
-                        
-                        if new_addr:
-                            ch = grpc.insecure_channel(new_addr)
-
-                            # --- AGGIUNGI QUESTO BLOCCO ---
-                            try:
-                                # Costringe il Master ad aspettare che l'handshake gRPC sia completo
-                                grpc.channel_ready_future(ch).result(timeout=60)
-                            except grpc.FutureTimeoutError:
-                                print(f" Il canale gRPC verso {new_addr} non è ancora pronto!")
-                            # ------------------------------
-                            
-                            current_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
-                            current_addr = new_addr
-                            
-                            # Aggiorniamo la rubrica globale (Salvando la TUPLA!)
-                            self.worker_assignments[sub_id] = (current_stub, current_addr)
-                            
-                            print(f" Ritento l'inferenza del {sub_id} sul nuovo nodo {new_addr}...")
-                            continue # Riavvia il ciclo per fare il secondo tentativo
-                        else:
-                            return sub_id, None
-                    else:
-                        print(f" Worker {sub_id} perso definitivamente anche in inferenza.")
-                        return sub_id, None
-                        
-                except Exception as e:
-                    print(f"Errore sconosciuto su {sub_id}: {e}")
+            
+            # --- SALTO RAPIDO CORRETTO ---
+            # Verifichiamo se c'è il cartello dei lavori in corso, per evitare Fork Bomb
+            with self.recovery_lock:
+                if initial_addr in self.is_recovering:
                     return sub_id, None
+
+            try:
+                req = rf_service_pb2.PredictRequest(
+                    model_id=self.config['model_id'],
+                    subforest_id=sub_id,
+                    features=flat_feats,
+                    task_type=task_bit
+                )
+                
+                # Facciamo la richiesta. Timeout di 30s standard.
+                return sub_id, initial_stub.Predict(req, timeout=30)
+
+            except grpc.RpcError as e:
+                # Usa il lock per garantire che solo UN thread metta il cartello
+                with self.recovery_lock:
+                    if initial_addr in self.is_recovering:
+                        # Qualcun altro ha già fatto partire i soccorsi un millisecondo fa
+                        return sub_id, None
+                    
+                    # Piantiamo il cartello "Lavori in Corso" in modo che gli altri chunk lo vedano subito
+                    self.is_recovering[initial_addr] = True
+                    print(f"\n [AUTO-HEALING] CRASH INFERENZA: Worker {sub_id} ({initial_addr}) non risponde!")
+                    print(f"🛠️ Avvio thread di ripristino per {initial_addr} in background. La pipeline non si fermerà!")
+                
+                # --- THREAD IN BACKGROUND ---
+                def _background_recovery():
+                    # Il _spawn_new_worker ha già una logica di lock interna per Boto3
+                    new_addr = self._spawn_new_worker(initial_addr)
+                    
+                    if new_addr:
+                        ch = grpc.insecure_channel(new_addr)
+                        try:
+                            # Aspettiamo in background che l'handshake gRPC funzioni
+                            grpc.channel_ready_future(ch).result(timeout=60)
+                            current_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
+                            
+                            # Aggiorniamo la rubrica: ai prossimi chunk, il Master manderà i dati qui!
+                            self.worker_assignments[sub_id] = (current_stub, new_addr)
+                            print(f" ✅ RIPRISTINO COMPLETATO! Il nuovo nodo {new_addr} è pronto per i prossimi chunk.")
+                            
+                        except Exception as ex:
+                            print(f" ⚠️ Handshake fallito col nuovo nodo {new_addr}: {ex}")
+                    else:
+                        print(f" ❌ Fallimento definitivo nel recupero di {initial_addr}.")
+                        
+                    # Alla fine (sia in caso di successo che di fallimento permanente) rimuoviamo il cartello
+                    with self.recovery_lock:
+                        if initial_addr in self.is_recovering:
+                            del self.is_recovering[initial_addr]
+
+                # Avvia il thread senza bloccare l'esecuzione
+                threading.Thread(target=_background_recovery, daemon=True).start()
+                
+                # Per QUESTO chunk attuale, rinunciamo alla parte del modello morta e andiamo avanti!
+                return sub_id, None
+
+            except Exception as e:
+                print(f"Errore sconosciuto su {sub_id}: {e}")
+                return sub_id, None
 
         # --- REINSERISCI QUESTO BLOCCO ALLA FINE DI PREDICT_BATCH ---
         active_workers = len(self.worker_assignments)
