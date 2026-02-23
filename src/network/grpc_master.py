@@ -28,7 +28,7 @@ class GrpcMaster:
     def _spawn_new_worker(self, old_worker_address):
         # 1. CONTROLLO VELOCE SENZA LOCK (per evitare colli di bottiglia se la macchina è già pronta)
         if old_worker_address in self.is_recovering and self.is_recovering[old_worker_address] is not None:
-             print(f" ⏳ Attesa ripristino già completato per {old_worker_address}...")
+             print(f" Attesa ripristino già completato per {old_worker_address}...")
              return self.is_recovering[old_worker_address]
 
         # 2. SEZIONE CRITICA CON LOCK
@@ -119,7 +119,10 @@ class GrpcMaster:
                     print(f" [AUTO-HEALING] Timeout critico: Il worker {new_ip} non ha aperto la porta in tempo utile.")
                     return None
                 
-                time.sleep(2) 
+                # Aspettiamo 10 secondi secchi per permettere agli import Python
+                # e al demone gRPC di stabilizzarsi prima di inviare i chunk.
+                print(" ⏳ Attesa di stabilizzazione del demone gRPC (10s)...")
+                time.sleep(10)
                 
                 # 3. SALVATAGGIO DELL'INDIRIZZO PER GLI ALTRI THREAD
                 self.is_recovering[old_worker_address] = new_address
