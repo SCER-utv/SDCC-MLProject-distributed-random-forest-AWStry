@@ -25,47 +25,47 @@ class GrpcMaster:
         self.is_recovering = {}
         # -------------------------------------
 
-        def _spawn_new_worker(self, old_worker_address):
-            # 1. CONTROLLO VELOCE SENZA LOCK (per evitare colli di bottiglia se la macchina è già pronta)
-            if old_worker_address in self.is_recovering and self.is_recovering[old_worker_address] is not None:
-                 print(f" ⏳ Attesa ripristino già completato per {old_worker_address}...")
-                 return self.is_recovering[old_worker_address]
+    def _spawn_new_worker(self, old_worker_address):
+        # 1. CONTROLLO VELOCE SENZA LOCK (per evitare colli di bottiglia se la macchina è già pronta)
+        if old_worker_address in self.is_recovering and self.is_recovering[old_worker_address] is not None:
+            print(f" ⏳ Attesa ripristino già completato per {old_worker_address}...")
+            return self.is_recovering[old_worker_address]
 
-            # 2. SEZIONE CRITICA CON LOCK
-            with self.recovery_lock:
-                # Doppia verifica (Double-checked locking) in caso un altro thread l'abbia creata mentre aspettavamo
-                if old_worker_address in self.is_recovering:
-                    return self.is_recovering[old_worker_address]
+        # 2. SEZIONE CRITICA CON LOCK
+        with self.recovery_lock:
+            # Doppia verifica (Double-checked locking) in caso un altro thread l'abbia creata mentre aspettavamo
+            if old_worker_address in self.is_recovering:
+                return self.is_recovering[old_worker_address]
 
-                # Segniamo subito che abbiamo preso in carico il ripristino
-                self.is_recovering[old_worker_address] = None
+            # Segniamo subito che abbiamo preso in carico il ripristino
+            self.is_recovering[old_worker_address] = None
 
-                # --- CALCOLO DEL NOME LOGICO ---
-                try:
-                    worker_num = self.workers.index(old_worker_address) + 1
-                    new_name = f"DRF-worker{worker_num}-autohealed"
-                except ValueError:
-                    new_name = "worker_extra_autohealed"
-                    worker_num = "?"
-                # ---------------------------------------
+            # --- CALCOLO DEL NOME LOGICO ---
+            try:
+                worker_num = self.workers.index(old_worker_address) + 1
+                new_name = f"DRF-worker{worker_num}-autohealed"
+            except ValueError:
+                new_name = "worker_extra_autohealed"
+                worker_num = "?"
+            # ---------------------------------------
             
-                print(f"\n [AUTO-HEALING] Crash del nodo {old_worker_address}! Innesco ripristino unico (Lock acquisito)...")
-                ec2 = boto3.resource('ec2', region_name='us-east-1')
+            print(f"\n [AUTO-HEALING] Crash del nodo {old_worker_address}! Innesco ripristino unico (Lock acquisito)...")
+            ec2 = boto3.resource('ec2', region_name='us-east-1')
             
-                AMI_ID = 'ami-0314835b37682ec20'  
-                SUBNET_ID = 'subnet-0a61f2346de4cd937'
-                SG_ID = 'sg-004dedd411b0fe130'     
-                KEY_NAME = 'distributed-random-forest-key'
+            AMI_ID = 'ami-0314835b37682ec20'  
+            SUBNET_ID = 'subnet-0a61f2346de4cd937'
+            SG_ID = 'sg-004dedd411b0fe130'     
+            KEY_NAME = 'distributed-random-forest-key'
 
-                startup_script = """#!/bin/bash
-                sudo -u ubuntu bash -c '
-                cd /home/ubuntu/SDCC-MLProject-distributed-random-forest-AWStry
-                source venv/bin/activate
-                export PYTHONPATH=$(pwd)
-                export AWS_S3_BUCKET=distributed-random-forest-bkt
-                nohup python src/worker.py 50051 > /home/ubuntu/worker_log.txt 2>&1 &
-                '
-                """
+            startup_script = """#!/bin/bash
+            sudo -u ubuntu bash -c '
+            cd /home/ubuntu/SDCC-MLProject-distributed-random-forest-AWStry
+            source venv/bin/activate
+            export PYTHONPATH=$(pwd)
+            export AWS_S3_BUCKET=distributed-random-forest-bkt
+            nohup python src/worker.py 50051 > /home/ubuntu/worker_log.txt 2>&1 &
+            '
+            """
 
             try:
                 instances = ec2.create_instances(
@@ -93,7 +93,6 @@ class GrpcMaster:
                     ]
                 )
 
-                print(f" [AUTO-HEALING] Creazione EC2 {new_instance.id} in corso. Attesa boot...")
             print(f" [AUTO-HEALING] Creazione EC2 {new_instance.id} in corso. Attesa boot...")
             new_instance.wait_until_running()
             new_instance.reload()
