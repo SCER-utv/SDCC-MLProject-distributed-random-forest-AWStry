@@ -25,78 +25,89 @@ class GrpcMaster:
         self.is_recovering = {}
         # -------------------------------------
 
-    def _spawn_new_worker(self, old_worker_address):
+        def _spawn_new_worker(self, old_worker_address):
+            # 1. CONTROLLO VELOCE SENZA LOCK (per evitare colli di bottiglia se la macchina è già pronta)
+            if old_worker_address in self.is_recovering and self.is_recovering[old_worker_address] is not None:
+                 print(f" ⏳ Attesa ripristino già completato per {old_worker_address}...")
+                 return self.is_recovering[old_worker_address]
 
-        # --- [NUOVO] CALCOLO DEL NOME LOGICO ---
-        try:
-            # Trova l'indice dell'IP crashato nella lista e aggiunge 1 (0 -> 1, 1 -> 2...)
-            worker_num = self.workers.index(old_worker_address) + 1
-            new_name = f"DRF-worker{worker_num}-autohealed"
-        except ValueError:
-            # Fallback di sicurezza se per qualche motivo non lo trova
-            new_name = "worker_extra_autohealed"
-            worker_num = "?"
-        # ---------------------------------------
-        
-        print(f"\n [AUTO-HEALING] Crash del nodo {old_worker_address}! Innesco ripristino...")
-        ec2 = boto3.resource('ec2', region_name='us-east-1')
-        
-        AMI_ID = 'ami-0314835b37682ec20'  
-        SUBNET_ID = 'subnet-0a61f2346de4cd937'
-        SG_ID = 'sg-004dedd411b0fe130'     
-        KEY_NAME = 'distributed-random-forest-key'
+            # 2. SEZIONE CRITICA CON LOCK
+            with self.recovery_lock:
+                # Doppia verifica (Double-checked locking) in caso un altro thread l'abbia creata mentre aspettavamo
+                if old_worker_address in self.is_recovering:
+                    return self.is_recovering[old_worker_address]
 
-        startup_script = """#!/bin/bash
-        sudo -u ubuntu bash -c '
-        cd /home/ubuntu/SDCC-MLProject-distributed-random-forest-AWStry
-        source venv/bin/activate
-        export PYTHONPATH=$(pwd)
-        export AWS_S3_BUCKET=distributed-random-forest-bkt
-        nohup python src/worker.py 50051 > /home/ubuntu/worker_log.txt 2>&1 &
-        '
-        """
+                # Segniamo subito che abbiamo preso in carico il ripristino
+                self.is_recovering[old_worker_address] = None
 
-        try:
-            instances = ec2.create_instances(
-                ImageId=AMI_ID,
-                InstanceType='t3.large', # t3.micro o t2.micro a seconda del Learner Lab
-                SubnetId=SUBNET_ID,
-                SecurityGroupIds=[SG_ID], 
-                KeyName=KEY_NAME,
-                UserData=startup_script,
-                MinCount=1, MaxCount=1,
-                IamInstanceProfile={
-                    'Name': 'LabInstanceProfile' 
-                },
-                TagSpecifications=[
-                    {
-                        'ResourceType': 'instance',
-                        'Tags': [
-                            {
-                                'Key': 'Name',
-                                'Value': new_name
-                            }
-                        ]
-                    }
-                ]
-            )
+                # --- CALCOLO DEL NOME LOGICO ---
+                try:
+                    worker_num = self.workers.index(old_worker_address) + 1
+                    new_name = f"DRF-worker{worker_num}-autohealed"
+                except ValueError:
+                    new_name = "worker_extra_autohealed"
+                    worker_num = "?"
+                # ---------------------------------------
             
-            new_instance = instances[0]
+                print(f"\n [AUTO-HEALING] Crash del nodo {old_worker_address}! Innesco ripristino unico (Lock acquisito)...")
+                ec2 = boto3.resource('ec2', region_name='us-east-1')
+            
+                AMI_ID = 'ami-0314835b37682ec20'  
+                SUBNET_ID = 'subnet-0a61f2346de4cd937'
+                SG_ID = 'sg-004dedd411b0fe130'     
+                KEY_NAME = 'distributed-random-forest-key'
+
+                startup_script = """#!/bin/bash
+                sudo -u ubuntu bash -c '
+                cd /home/ubuntu/SDCC-MLProject-distributed-random-forest-AWStry
+                source venv/bin/activate
+                export PYTHONPATH=$(pwd)
+                export AWS_S3_BUCKET=distributed-random-forest-bkt
+                nohup python src/worker.py 50051 > /home/ubuntu/worker_log.txt 2>&1 &
+                '
+                """
+
+            try:
+                instances = ec2.create_instances(
+                    ImageId=AMI_ID,
+                    InstanceType='t3.large',
+                    SubnetId=SUBNET_ID,
+                    SecurityGroupIds=[SG_ID], 
+                    KeyName=KEY_NAME,
+                    UserData=startup_script,
+                    MinCount=1, MaxCount=1,
+                    IamInstanceProfile={
+                        'Name': 'LabInstanceProfile' 
+                    }
+                )
+                
+                new_instance = instances[0]
+                
+                # <- [MODIFICA]: Aggiunto qui la forzatura del Tag
+                new_instance.create_tags(
+                    Tags=[
+                        {
+                            'Key': 'Name',
+                            'Value': new_name
+                        }
+                    ]
+                )
+
+                print(f" [AUTO-HEALING] Creazione EC2 {new_instance.id} in corso. Attesa boot...")
             print(f" [AUTO-HEALING] Creazione EC2 {new_instance.id} in corso. Attesa boot...")
             new_instance.wait_until_running()
             new_instance.reload()
             new_ip = new_instance.private_ip_address
             new_address = f"{new_ip}:50051"
 
-            # --- [NUOVO] ACTIVE POLLING ---
+            # --- ACTIVE POLLING ---
             port_is_open = False
             max_attempts = 30 # Prova per circa 2.5 minuti (30 * 5 sec)
-            
-            print(f" [AUTO-HEALING] Macchina accesa ({new_ip}). Attendo 90s per l'avvio di gRPC...")
+                
+            print(f" [AUTO-HEALING] Macchina accesa ({new_ip}). Attendo l'avvio di gRPC...")
 
             for attempt in range(max_attempts):
                 try:
-                    # Tenta di aprire una connessione TCP velocissima
                     with socket.create_connection((new_ip, 50051), timeout=2):
                         port_is_open = True
                         print(f" [AUTO-HEALING] Porta 50051 APERTA al tentativo {attempt + 1}! Il Worker è pronto.")
@@ -104,18 +115,22 @@ class GrpcMaster:
                 except (socket.timeout, ConnectionRefusedError, OSError):
                     print(f" Tentativo {attempt + 1}/{max_attempts}: Porta ancora chiusa. Attendo...")
                     time.sleep(5)
-            
+                
             if not port_is_open:
                 print(f" [AUTO-HEALING] Timeout critico: Il worker {new_ip} non ha aperto la porta in tempo utile.")
                 return None
-            
-            # Diamogli 2 secondi extra per permettere a gRPC di stabilizzarsi dopo l'apertura del socket
+                
             time.sleep(2) 
-            # ------------------------------
-            
+                
+            # 3. SALVATAGGIO DELL'INDIRIZZO PER GLI ALTRI THREAD
+            self.is_recovering[old_worker_address] = new_address
             return new_address
+
         except Exception as e:
             print(f" [AUTO-HEALING] Fallimento critico di Boto3: {e}")
+            # Rimuoviamo il marcatore in caso di fallimento in modo che altri possano riprovare
+            if old_worker_address in self.is_recovering:
+                del self.is_recovering[old_worker_address]
             return None
 
     def connect(self):
