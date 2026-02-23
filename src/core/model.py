@@ -11,13 +11,15 @@ from urllib.parse import urlparse
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.core.factories.ids_task_factory import IDSTaskFactory
 from src.core.factories.taxi_task_factory import TaxiTaskFactory
+import threading
 
 class RandomForestManager:
     def __init__(self, models_dir):
         self.models_dir = models_dir
         self.loaded_models = {}
         self.dataset_cache = {}
-        # os.makedirs(self.models_dir, exist_ok=True) -> Rimosso: su S3 non si creano cartelle vuote
+        # --- NUOVO: Lock per evitare Race Condition sui download ---
+        self.download_lock = threading.Lock()
 
     def _get_ml_components(self, task_type):
         """Helper per ottenere la strategia corretta dal bit gRPC"""
@@ -159,28 +161,35 @@ class RandomForestManager:
 
         ### [INIZIO MODIFICA AWS] Lazy Loading del modello da S3 ###
         if model_key not in self.loaded_models:
-            filename = f"{model_key}.joblib"
-            dataset_folder = "taxi" if task_type == 1 else "higgs"
-            s3_key = f"models/{dataset_folder}/{filename}"
             
-            # --- FIX PERMESSI: Usiamo self.models_dir invece di /tmp ---
-            os.makedirs(self.models_dir, exist_ok=True)
-            local_path = os.path.join(self.models_dir, filename)
+            # --- AGGIUNTA DEL LOCK ---
+            with self.download_lock:
+                # Doppia verifica (se un altro thread ha scaricato mentre aspettavamo)
+                if model_key not in self.loaded_models:
+            # -------------------------
             
-            s3_client = boto3.client('s3')
-            print(f" -> [Worker] Download modello da s3://{target_bucket}/{s3_key} ...")
-            try:
-                # Scarica direttamente nella cartella del progetto
-                s3_client.download_file(target_bucket, s3_key, local_path)
-                
-                # Caricalo in RAM
-                self.loaded_models[model_key] = joblib.load(local_path)
-                
-                # Pulisce il file dal disco
-                os.remove(local_path)
-            except Exception as e:
-                print(f"!!! Errore: Download Modello {filename} da S3 fallito: {e}")
-                return []
+                    filename = f"{model_key}.joblib"
+                    dataset_folder = "taxi" if task_type == 1 else "higgs"
+                    s3_key = f"models/{dataset_folder}/{filename}"
+                    
+                    # --- FIX PERMESSI: Usiamo self.models_dir invece di /tmp ---
+                    os.makedirs(self.models_dir, exist_ok=True)
+                    local_path = os.path.join(self.models_dir, filename)
+                    
+                    s3_client = boto3.client('s3')
+                    print(f" -> [Worker] Download modello da s3://{target_bucket}/{s3_key} ...")
+                    try:
+                        # Scarica direttamente nella cartella del progetto
+                        s3_client.download_file(target_bucket, s3_key, local_path)
+                        
+                        # Caricalo in RAM
+                        self.loaded_models[model_key] = joblib.load(local_path)
+                        
+                        # Pulisce il file dal disco
+                        os.remove(local_path)
+                    except Exception as e:
+                        print(f"!!! Errore: Download Modello {filename} da S3 fallito: {e}")
+                        return []
         ### [FINE MODIFICA AWS] ###
 
         model = self.loaded_models[model_key]
