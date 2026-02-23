@@ -21,7 +21,6 @@ class GrpcWorker(rf_service_pb2_grpc.RandomForestWorkerServicer):
         self.manager = RandomForestManager(self.models_dir)
         
         # [NUOVO] Setup di Boto3 per S3, HARDCODED, DA MODIFICARE
-        self.s3_client = boto3.client('s3')
         self.bucket_name = os.getenv('AWS_S3_BUCKET', 'distributed-random-forest-bkt')
 
     def _get_factory(self, task_type):
