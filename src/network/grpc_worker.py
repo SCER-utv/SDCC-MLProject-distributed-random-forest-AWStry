@@ -48,21 +48,7 @@ class GrpcWorker(rf_service_pb2_grpc.RandomForestWorkerServicer):
                 max_features=request.max_features,
                 criterion=request.criterion
             )
-
-            #  [NUOVO] SALVATAGGIO SU S3 
-            # Assumiamo che il RandomForestManager salvi i file in formato .joblib.
-            filename = f"{request.model_id}_{request.subforest_id}.joblib"
-            local_model_path = os.path.join(self.models_dir, filename)
-            s3_model_key = f"models_backup/{filename}"
-
-            if os.path.exists(local_model_path):
-                print(f"☁️ Upload modello su S3 in corso: {s3_model_key}...")
-                self.s3_client.upload_file(local_model_path, self.bucket_name, s3_model_key)
-                print(" Modello messo in sicurezza su S3.")
-            else:
-                print(f" Attenzione: Il file locale {local_model_path} non è stato trovato!")
            
-
             print(f"Sto usando il dataset: {request.dataset_s3_path}")
             return rf_service_pb2.TrainResponse(success=True, trees_built=n)
             
