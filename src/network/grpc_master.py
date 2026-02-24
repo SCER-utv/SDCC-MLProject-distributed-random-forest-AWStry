@@ -316,7 +316,7 @@ class GrpcMaster:
                         resp = current_stub.Predict(req, timeout=180)
                         
                         # --- STAMPA DI CONFERMA VISIVA ---
-                        print(f" 🟢 Worker {sub_id} ({current_addr}) ha completato il blocco [ID: {chunk_id}]")
+                        print(f" Worker {sub_id} ({current_addr}) ha completato il blocco [ID: {chunk_id}]")
                         return sub_id, resp
     
                     except grpc.RpcError as e:
@@ -336,15 +336,15 @@ class GrpcMaster:
                                     # Aggiorna la rubrica
                                     self.worker_assignments[sub_id] = (current_stub, current_addr)
                                     
-                                    print(f" ✅ RIPRISTINO COMPLETATO! {new_addr} riprova il blocco [ID: {chunk_id}]...")
+                                    print(f" RIPRISTINO COMPLETATO! {new_addr} riprova il blocco [ID: {chunk_id}]...")
                                     continue 
                                 except Exception as ex:
-                                    print(f" ⚠️ Handshake fallito col nuovo nodo {new_addr}: {ex}")
+                                    print(f" Handshake fallito col nuovo nodo {new_addr}: {ex}")
                                     return sub_id, None
                             else:
                                 return sub_id, None
                         else:
-                            print(f" ❌ Worker {sub_id} perso definitivamente.")
+                            print(f" Worker {sub_id} perso definitivamente.")
                             return sub_id, None
                             
                     except Exception as e:
