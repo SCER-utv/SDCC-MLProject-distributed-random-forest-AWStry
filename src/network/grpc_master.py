@@ -32,7 +32,7 @@ class GrpcMaster:
         with self.recovery_lock:
             # Doppio controllo (se mentre aspettavamo alla porta un altro thread l'ha creata)
             if old_worker_address in self.is_recovering and self.is_recovering[old_worker_address] is not None:
-                return self.is_recovering[old_worker_address
+                return self.is_recovering[old_worker_address]
 
             # Segniamo subito che abbiamo preso in carico il ripristino
             self.is_recovering[old_worker_address] = None
