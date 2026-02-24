@@ -253,30 +253,28 @@ class GrpcMaster:
                         new_addr = self._spawn_new_worker(current_addr)
                         
                         if new_addr_string:
-                            # --- IL FIX È QUI: Ricreiamo il canale e lo Stub per il nuovo IP ---
-                            ch = grpc.insecure_channel(new_addr_string)
-                            new_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
+                            try:
+                                # --- IL FIX È QUI: Ricreiamo il canale e lo Stub per il nuovo IP ---
+                                ch = grpc.insecure_channel(new_addr_string)
+                                new_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
                             
-                            current_stub = new_stub
-                            current_addr = new_addr_string
+                                current_stub = new_stub
+                                current_addr = new_addr_string
                             
-                            # Aggiorniamo la rubrica globale (Thread-safe)
-                            self.worker_assignments[task['subforest_id']] = (current_stub, current_addr)
-                            # ------------------------------------------------------------------
+                                # Aggiorniamo la rubrica globale (Thread-safe)
+                                self.worker_assignments[task['subforest_id']] = (current_stub, current_addr)
+                                # ------------------------------------------------------------------
                             
-                            print(f" RIPRISTINO COMPLETATO! {new_addr} riprova il blocco [ID: {chunk_id}]...")
-                            continue 
-                        except Exception as ex:
-                            print(f" Handshake fallito col nuovo nodo {new_addr}: {ex}")
-                            return sub_id, None
+                                print(f" RIPRISTINO COMPLETATO! {new_addr} riprova il blocco [ID: {chunk_id}]...")
+                                continue 
+                            except Exception as ex:
+                                print(f" Handshake fallito col nuovo nodo {new_addr}: {ex}")
+                                return sub_id, None
+                            else:
+                                return sub_id, None
                         else:
+                            print(f" Worker {sub_id} perso definitivamente.")
                             return sub_id, None
-                    else:
-                        print(f" Worker {sub_id} perso definitivamente.")
-                        return sub_id, None
-                        
-                except Exception as e:
-                    return sub_id, None
                     
         completed_tasks = 0
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
