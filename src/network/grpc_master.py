@@ -19,23 +19,20 @@ class GrpcMaster:
         self.worker_assignments = {}
         # [MODIFICA FT] Lista dei worker "morti" da escludere
         self.dead_workers = set()
-        
-        # --- AGGIUNGI QUESTE DUE RIGHE QUI ---
         self.recovery_lock = threading.Lock()
         self.is_recovering = {}
-        # -------------------------------------
+       
 
     def _spawn_new_worker(self, old_worker_address):
-        # 1. CONTROLLO VELOCE SENZA LOCK (per evitare colli di bottiglia se la macchina è già pronta)
+        # 1. Se la macchina è già stata ripristinata da un altro thread, usa l'IP nuovo e se ne va
         if old_worker_address in self.is_recovering and self.is_recovering[old_worker_address] is not None:
-             print(f" Attesa ripristino già completato per {old_worker_address}...")
              return self.is_recovering[old_worker_address]
 
-        # 2. SEZIONE CRITICA CON LOCK
+        # 2. Solo il PRIMO thread che vede il crash entra qui e chiama AWS
         with self.recovery_lock:
-            # Doppia verifica (Double-checked locking) in caso un altro thread l'abbia creata mentre aspettavamo
-            if old_worker_address in self.is_recovering:
-                return self.is_recovering[old_worker_address]
+            # Doppio controllo (se mentre aspettavamo alla porta un altro thread l'ha creata)
+            if old_worker_address in self.is_recovering and self.is_recovering[old_worker_address] is not None:
+                return self.is_recovering[old_worker_address
 
             # Segniamo subito che abbiamo preso in carico il ripristino
             self.is_recovering[old_worker_address] = None
@@ -121,9 +118,12 @@ class GrpcMaster:
                 
                 # Aspettiamo 10 secondi secchi per permettere agli import Python
                 # e al demone gRPC di stabilizzarsi prima di inviare i chunk.
-                print(" ⏳ Attesa di stabilizzazione del demone gRPC (10s)...")
+                print(" Attesa di stabilizzazione del demone gRPC (10s)...")
                 time.sleep(15)
-                
+
+                # Salviamo il nuovo indirizzo IP nel dizionario. 
+                # Da questo momento in poi, gli altri 9 thread useranno questo IP senza chiamare AWS!
+                self.is_recovering[old_worker_address] = new_address
                 return new_address
 
             except Exception as e:
@@ -249,8 +249,8 @@ class GrpcMaster:
                     print(f"\nCRASH RILEVATO: Worker {task['subforest_id']} ({current_addr}) è caduto durante il training!")
                     
                     if attempt < MAX_RETRIES:
-                        print("🛠️ Innesco protocollo di ripristino per l'inferenza...")
-                        new_addr_string = self._spawn_new_worker(current_addr)
+                        # Qui il thread morto chiama il ripristino. Il Worker Sano invece ha già fatto 'return' sopra!
+                        new_addr = self._spawn_new_worker(current_addr)
                         
                         if new_addr_string:
                             # --- IL FIX È QUI: Ricreiamo il canale e lo Stub per il nuovo IP ---
@@ -264,17 +264,19 @@ class GrpcMaster:
                             self.worker_assignments[task['subforest_id']] = (current_stub, current_addr)
                             # ------------------------------------------------------------------
                             
-                            print(f" 🔄 Ritento l'inferenza del {sub_id} sul nuovo nodo {new_addr_string}...")
-                            continue # Riavvia il ciclo per fare il secondo tentativo
+                            print(f" RIPRISTINO COMPLETATO! {new_addr} riprova il blocco [ID: {chunk_id}]...")
+                            continue 
+                        except Exception as ex:
+                            print(f" Handshake fallito col nuovo nodo {new_addr}: {ex}")
+                            return sub_id, None
                         else:
                             return sub_id, None
                     else:
-                        print(f" Worker {task['subforest_id']} perso definitivamente. Rinuncio.")
-                        return task['subforest_id'], False
+                        print(f" Worker {sub_id} perso definitivamente.")
+                        return sub_id, None
                         
                 except Exception as e:
-                    print(f"Errore su {task['subforest_id']}: {e}")
-                    return task['subforest_id'], False
+                    return sub_id, None
                     
         completed_tasks = 0
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -291,14 +293,14 @@ class GrpcMaster:
                     
 
     def predict_batch(self, batch_rows):
-            # 1. Preparazione payload
             flat_feats = [x for r in batch_rows for x in r]
             row_votes = [[] for _ in range(len(batch_rows))]
             task_bit = self.strategy.get_task_type()
-    
             responded_ids = set()
+            
+            # Creiamo un ID univoco per questo specifico blocco di dati
+            chunk_id = hex(id(batch_rows))[-6:]
     
-            # 2. Richiesta parallela ai Worker con AUTO-HEALING BLOCCANTE (Strict Fault Tolerance)
             def _ask_worker(sub_id, initial_stub, initial_addr):
                 MAX_RETRIES = 1
                 current_stub = initial_stub
@@ -313,58 +315,47 @@ class GrpcMaster:
                             task_type=task_bit
                         )
                         
-                        # Attendiamo la risposta gRPC
                         resp = current_stub.Predict(req, timeout=180)
-                    
-                        # --- NUOVA STAMPA DI CONFERMA ---
-                        print(f" Worker {sub_id} ({current_addr}) ha completato l'inferenza del blocco.")
-                    
+                        
+                        # --- STAMPA DI CONFERMA VISIVA ---
+                        print(f" 🟢 Worker {sub_id} ({current_addr}) ha completato il blocco [ID: {chunk_id}]")
                         return sub_id, resp
     
                     except grpc.RpcError as e:
-                        print(f"\n [AUTO-HEALING] CRASH INFERENZA: Worker {sub_id} ({current_addr}) non risponde!")
+                        print(f"\n [AUTO-HEALING] CRASH Worker {sub_id} ({current_addr}) sul blocco [ID: {chunk_id}]!")
                         
                         if attempt < MAX_RETRIES:
-                            print(f"🛠️ Avvio protocollo di ripristino BLOCCANTE per {current_addr}...")
-                            
-                            # --- IL THREAD SI FERMA QUI E CHIAMA BOTO3 ---
-                            # Nel frattempo il thread del Worker sano ha già concluso e aspetta il completamento di questo
+                            # Qui il thread morto chiama il ripristino. Il Worker Sano invece ha già fatto 'return' sopra!
                             new_addr = self._spawn_new_worker(current_addr)
                             
                             if new_addr:
                                 ch = grpc.insecure_channel(new_addr)
                                 try:
-                                    print(f" ⏳ Handshake gRPC con {new_addr} in corso...")
                                     grpc.channel_ready_future(ch).result(timeout=60)
                                     current_stub = rf_service_pb2_grpc.RandomForestWorkerStub(ch)
                                     current_addr = new_addr
                                     
-                                    # Aggiorniamo la rubrica: i futuri chunk useranno direttamente il nuovo IP
+                                    # Aggiorna la rubrica
                                     self.worker_assignments[sub_id] = (current_stub, current_addr)
                                     
-                                    print(f" RIPRISTINO COMPLETATO! Il nuovo nodo ({new_addr}) calcola la sua parte del chunk corrente...")
-                                    # Il ciclo "continue" fa rieseguire il blocco try: il nuovo Worker processa il chunk fallito!
+                                    print(f" ✅ RIPRISTINO COMPLETATO! {new_addr} riprova il blocco [ID: {chunk_id}]...")
                                     continue 
                                 except Exception as ex:
-                                    print(f" Handshake fallito col nuovo nodo {new_addr}: {ex}")
+                                    print(f" ⚠️ Handshake fallito col nuovo nodo {new_addr}: {ex}")
                                     return sub_id, None
                             else:
-                                print(f" Fallimento critico: impossibile creare la nuova macchina su AWS.")
                                 return sub_id, None
                         else:
-                            print(f" Worker {sub_id} perso definitivamente anche in inferenza.")
+                            print(f" ❌ Worker {sub_id} perso definitivamente.")
                             return sub_id, None
                             
                     except Exception as e:
-                        print(f"Errore sconosciuto su {sub_id}: {e}")
                         return sub_id, None
     
             active_workers = len(self.worker_assignments)
             if active_workers == 0:
                 return [None] * len(batch_rows)
     
-            # Il ThreadPool esegue i worker contemporaneamente.
-            # Il Master "passerà oltre" (Aggregazione) SOLO QUANDO entrambi avranno risposto.
             with ThreadPoolExecutor(max_workers=active_workers) as executor:
                 futures = {
                     executor.submit(_ask_worker, sid, stub, addr): sid
