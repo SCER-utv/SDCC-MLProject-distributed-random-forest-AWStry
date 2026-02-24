@@ -22,8 +22,9 @@ loaded_subforests = []
 current_strategy = None
 model_feature_count = 0
 
+# Scarica tutte le parti del modello da S3 e le carica in RAM
 def download_and_load_model(model_id, dataset_type):
-    """Scarica tutte le parti del modello da S3 e le carica in RAM"""
+    
     global loaded_subforests, current_strategy, model_feature_count
     
     # Pulizia precedente se stiamo caricando un nuovo modello
@@ -76,17 +77,17 @@ def download_and_load_model(model_id, dataset_type):
                 # Pulizia disco
                 os.remove(local_path)
                 
-        print(f"\n✅ Modello {model_id} caricato con successo! Sotto-foreste attive: {len(loaded_subforests)}")
-        print(f"ℹ️ Feature in ingresso attese: {model_feature_count}")
+        print(f"\n Modello {model_id} caricato con successo! Sotto-foreste attive: {len(loaded_subforests)}")
+        print(f" Feature in ingresso attese: {model_feature_count}")
         
     except Exception as e:
-        print(f"❌ Errore critico durante il caricamento del modello: {e}")
+        print(f" Errore critico durante il caricamento del modello: {e}")
         sys.exit(1)
 
 
+# Endpoint REST per effettuare un'inferenza al volo
 @app.route('/predict', methods=['POST'])
 def predict_single_instance():
-    """Endpoint REST per effettuare un'inferenza al volo"""
     
     # 1. Controlliamo che il modello sia caricato
     if not loaded_subforests or not current_strategy:
@@ -150,5 +151,5 @@ if __name__ == '__main__':
     download_and_load_model(args.model_id, args.dataset)
     
     # Avvia l'API
-    print(f"\n🚀 Server API pronto all'ascolto sulla porta {args.port}!")
+    print(f"\n Server API pronto all'ascolto sulla porta {args.port}!")
     app.run(host='0.0.0.0', port=args.port)
