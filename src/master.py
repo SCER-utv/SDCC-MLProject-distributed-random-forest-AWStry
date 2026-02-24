@@ -62,6 +62,9 @@ def save_metrics(dataset, n_workers, n_trees, strategy_name, train_time, inf_tim
 def update_model_registry(model_id, dataset, n_workers, n_trees, metrics_dict, config):
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1') 
     table = dynamodb.Table('ModelRegistry')
+
+    # [FIX] Rigeneriamo il timestamp per popolare il campo su DynamoDB
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     try:
         table.put_item(
