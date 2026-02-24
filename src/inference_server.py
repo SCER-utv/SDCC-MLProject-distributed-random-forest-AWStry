@@ -12,8 +12,8 @@ from urllib.parse import urlparse
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Importiamo le tue strategie per riutilizzare la logica di aggregazione
-from src.core.strategies.classification_strategies import ClassificationStrategy
-from src.core.strategies.regression_strategies import RegressionStrategy
+from src.core.strategies.classification_strategy import ClassificationStrategy
+from src.core.strategies.regression_strategy import RegressionStrategy
 
 app = Flask(__name__)
 
