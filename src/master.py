@@ -58,15 +58,10 @@ def save_metrics(dataset, n_workers, n_trees, strategy_name, train_time, inf_tim
     s3_client.put_object(Bucket=target_bucket, Key=s3_key, Body=csv_buffer.getvalue())
     print(f">> Risultati accodati permanentemente in: s3://{target_bucket}/{s3_key}")
 
-def update_model_registry(dataset, n_workers, n_trees, metrics_dict, config):
-    
-    #HARDCODED, DA MODIFICARE!
+# Aggiungiamo model_id come parametro
+def update_model_registry(model_id, dataset, n_workers, n_trees, metrics_dict, config):
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1') 
     table = dynamodb.Table('ModelRegistry')
-    
-    # Generiamo un ID univoco basato sul dataset e l'orario esatto
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    model_id = f"rf_{dataset}_{timestamp}"
     
     try:
         table.put_item(
@@ -123,6 +118,11 @@ def process_training_job(dataset, workers_list, trees, strategy_file='config/wor
     config['num_workers'] = num_active_workers
     config['workers'] = workers_list
     config['total_trees'] = trees
+    # --- NUOVO: Generiamo il Model ID univoco QUI e lo diamo ai Worker! ---
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    unique_model_id = f"rf_{dataset}_{timestamp}"
+    config['model_id'] = unique_model_id
+    # ---------------------------------------------------------------------
 
     # Selezione Factory
     if dataset == 'taxi': factory = TaxiTaskFactory()
@@ -235,7 +235,7 @@ def process_training_job(dataset, workers_list, trees, strategy_file='config/wor
         print(">> Risultati salvati in experiment_results.csv per l'analisi!")
 
         # 3. [NUOVO] Registriamo il modello nel Database per lo Stato Condiviso
-        update_model_registry(dataset, config['num_workers'], trees, metrics, config)
+        update_model_registry(config['model_id'], dataset, config['num_workers'], trees, metrics, config)
     else:
         print("Errore: Nessuna predizione ricevuta dai Worker.")
 
